@@ -14,6 +14,7 @@ from .cimpl import (Consumer,  # noqa
                     OFFSET_END,
                     OFFSET_STORED,
                     OFFSET_INVALID)
+from .red import RConsumer, RProducer
 
 __version__ = version()[0]
 

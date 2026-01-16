@@ -51,15 +51,16 @@ def get_install_requirements(path):
     ]
 
 
-setup(name='confluent-kafka',
+setup(name='red-kafka',
       version='1.3.0',
-      description='Confluent\'s Python client for Apache Kafka',
+      description='Red Kafka Python client for Apache Kafka',
       author='Confluent Inc',
       author_email='support@confluent.io',
       url='https://github.com/confluentinc/confluent-kafka-python',
       ext_modules=[module],
       packages=find_packages(exclude=("tests", "tests.*")),
       data_files=[('', ['LICENSE.txt'])],
+      python_requires='>=3.10',
       install_requires=INSTALL_REQUIRES,
       extras_require={
           'avro': AVRO_REQUIRES,

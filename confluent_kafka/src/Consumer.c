@@ -1281,6 +1281,9 @@ static PyMethodDef Consumer_methods[] = {
         { "list_topics", (PyCFunction)list_topics, METH_VARARGS|METH_KEYWORDS,
           list_topics_doc
         },
+        { "stats_collect", (PyCFunction)stats_collect, METH_NOARGS,
+          stats_collect_doc
+        },
 
 	{ NULL }
 };

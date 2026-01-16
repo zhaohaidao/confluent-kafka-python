@@ -78,14 +78,33 @@ LIBRDKAFKA_VERSION=$1
 function install_deps {
     echo "# Installing basic system dependencies"
     if which apt-get >/dev/null 2>&1; then
-        sudo apt-get -y install gcc g++ zlib1g-dev
+        sudo apt-get -y install gcc g++ zlib1g-dev libssl-dev
     else
-        yum install -y zlib-devel gcc gcc-c++ libstdc++-devel
+        yum install -y zlib-devel openssl-devel gcc gcc-c++ libstdc++-devel
     fi
 }
 
 function build_librdkafka {
     local dest=$1
+    if [[ -n $RDKAFKA_SOURCE_DIR ]]; then
+        if ! which cmake >/dev/null 2>&1; then
+            if which apt-get >/dev/null 2>&1; then
+                sudo apt-get -y install cmake
+            else
+                yum install -y cmake
+            fi
+        fi
+        if [[ $RDKAFKA_SOURCE_DIR != /* ]]; then
+            RDKAFKA_SOURCE_DIR="$PWD/$RDKAFKA_SOURCE_DIR"
+        fi
+        echo "# Building librdkafka from local source: $RDKAFKA_SOURCE_DIR"
+        local builddir=/tmp/rdkafka-build
+        cmake -S "$RDKAFKA_SOURCE_DIR" -B "$builddir" \
+            -DRDKAFKA_BUILD_CPP=OFF -DBUILD_SHARED_LIBS=ON
+        cmake --build "$builddir"
+        cmake --install "$builddir" --prefix "$dest"
+        return
+    fi
     echo "# Building librdkafka ${LIBRDKAFKA_VERSION}"
     tools/bootstrap-librdkafka.sh --require-ssl ${LIBRDKAFKA_VERSION} $dest
 
@@ -143,4 +162,3 @@ function build {
 echo "$0: $HOSTNAME: Building in docker"
 build /build
 echo "$0: $HOSTNAME: Done"
-

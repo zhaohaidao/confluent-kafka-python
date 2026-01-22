@@ -24,7 +24,7 @@
 #
 
 from confluent_kafka import KafkaError, KafkaException, version
-from confluent_kafka import Producer, Consumer
+from confluent_kafka import Producer, Consumer, RProducer, RConsumer
 from confluent_kafka.admin import AdminClient, NewTopic
 from collections import defaultdict
 from builtins import int
@@ -34,6 +34,7 @@ import time
 import json
 import logging
 import sys
+import uuid
 
 
 class SoakRecord (object):
@@ -63,13 +64,32 @@ class SoakClient (object):
         Both clients print their message and error counters every 10 seconds.
     """
 
+    @staticmethod
+    def _header_to_str(value):
+        if value is None:
+            return None
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return str(value)
+
     def dr_cb(self, err, msg):
         """ Producer delivery report callback """
         if err is not None:
             self.logger.warning("producer: delivery failed: {} [{}]: {}".format(msg.topic(), msg.partition(), err))
-            self.dr_err_cnt += 1
+            with self.metrics_lock:
+                self.dr_err_cnt += 1
+                self.delivery_error_histogram[str(err.code())] += 1
         else:
-            self.dr_cnt += 1
+            with self.metrics_lock:
+                self.dr_cnt += 1
+                headers = msg.headers() or []
+                headers_map = dict(headers)
+                msgid = headers_map.get("msgid")
+                if msgid is not None:
+                    try:
+                        self.last_delivered_msgid = int(msgid)
+                    except ValueError:
+                        pass
             if (self.dr_cnt % self.disprate) == 0:
                 self.logger.debug("producer: delivered message to {} [{}] at offset {}".format(
                     msg.topic(), msg.partition(), msg.offset()))
@@ -85,6 +105,8 @@ class SoakClient (object):
             try:
                 self.producer.produce(self.topic, value=record.serialize(),
                                       headers={"msgid": str(record.msgid),
+                                               "marker": self.message_marker,
+                                               "prefix": self.message_prefix,
                                                "time": str(time.time()),
                                                "txcnt": str(txcnt)},
                                       on_delivery=self.dr_cb)
@@ -94,22 +116,26 @@ class SoakClient (object):
                 self.producer.poll(1)
                 continue
 
-        self.producer_msgid += 1
+        with self.metrics_lock:
+            self.last_produced_msgid = record.msgid
+            self.producer_msgid += 1
 
     def producer_stats(self):
         """ Print producer stats """
+        metrics = self.metrics()
         self.logger.info("producer: {} messages produced, {} delivered, {} failed, {} error_cbs".format(
-            self.producer_msgid, self.dr_cnt, self.dr_err_cnt,
-            self.producer_error_cb_cnt))
+            metrics['produced'], metrics['delivered'], metrics['delivery_errors'],
+            metrics['producer_error_callbacks']))
 
     def producer_run(self):
         """ Producer main loop """
         sleep_intvl = 1.0 / self.rate
 
-        self.producer_msgid = 0
-        self.dr_cnt = 0
-        self.dr_err_cnt = 0
-        self.producer_error_cb_cnt = 0
+        with self.metrics_lock:
+            self.producer_msgid = 0
+            self.dr_cnt = 0
+            self.dr_err_cnt = 0
+            self.producer_error_cb_cnt = 0
 
         next_stats = time.time() + 10
 
@@ -149,11 +175,12 @@ class SoakClient (object):
 
     def consumer_stats(self):
         """ Print consumer stats """
+        metrics = self.metrics()
         self.logger.info("consumer: {} messages consumed, {} duplicates, "
                          "{} missed, {} message errors, {} consumer errors, {} error_cbs".format(
-                             self.msg_cnt, self.msg_dup_cnt, self.msg_miss_cnt,
-                             self.msg_err_cnt, self.consumer_err_cnt,
-                             self.consumer_error_cb_cnt))
+                             metrics['consumed'], metrics['duplicates'], metrics['missing'],
+                             metrics['message_errors'], metrics['consumer_errors'],
+                             metrics['consumer_error_callbacks']))
 
     def consumer_run(self):
         """ Consumer main loop """
@@ -161,13 +188,14 @@ class SoakClient (object):
 
         self.consumer.subscribe([self.topic])
 
-        self.msg_cnt = 0
-        self.msg_dup_cnt = 0
-        self.msg_miss_cnt = 0
-        self.msg_err_cnt = 0
-        self.consumer_err_cnt = 0
-        self.consumer_error_cb_cnt = 0
-        self.last_commited = None
+        with self.metrics_lock:
+            self.msg_cnt = 0
+            self.msg_dup_cnt = 0
+            self.msg_miss_cnt = 0
+            self.msg_err_cnt = 0
+            self.consumer_err_cnt = 0
+            self.consumer_error_cb_cnt = 0
+            self.last_committed = None
 
         # Keep track of high-watermarks to make sure we don't go backwards
         hwmarks = defaultdict(int)
@@ -179,18 +207,33 @@ class SoakClient (object):
 
             if msg.error() is not None:
                 self.logger.error("consumer: error: {}".format(msg.error()))
-                self.consumer_err_cnt += 1
+                with self.metrics_lock:
+                    self.consumer_err_cnt += 1
+                    self.consumer_poll_error_histogram[str(msg.error().code())] += 1
+                continue
+
+            headers = msg.headers() or []
+            headers_map = dict(headers)
+            marker = self._header_to_str(headers_map.get("marker"))
+            if marker != self.message_marker:
+                with self.metrics_lock:
+                    self.msg_foreign_cnt += 1
                 continue
 
             try:
-                record = SoakRecord.deserialize(msg.value()) # noqa unused variable
+                record = SoakRecord.deserialize(msg.value())
+                with self.metrics_lock:
+                    self.last_consumed_msgid = max(self.last_consumed_msgid, record.msgid)
             except ValueError as ex:
                 self.logger.info("consumer: Failed to deserialize message in "
                                  "{} [{}] at offset {} (headers {}): {}".format(
                                      msg.topic(), msg.partition(), msg.offset(), msg.headers(), ex))
-                self.msg_err_cnt += 1
+                with self.metrics_lock:
+                    self.msg_err_cnt += 1
+                    self.deserialize_error_histogram[ex.__class__.__name__] += 1
 
-            self.msg_cnt += 1
+            with self.metrics_lock:
+                self.msg_cnt += 1
 
             if (self.msg_cnt % self.disprate) == 0:
                 self.logger.info("consumer: {} messages consumed: Message {} "
@@ -211,17 +254,21 @@ class SoakClient (object):
                                             msg.topic(), msg.partition(),
                                             msg.offset(), msg.headers(), hw,
                                             self.last_committed))
-                    self.msg_dup_cnt += (hw + 1) - msg.offset()
-                elif msg.offset() > hw + 1:
+                    with self.metrics_lock:
+                        self.msg_dup_cnt += (hw + 1) - msg.offset()
+                elif self.check_offset_gaps and msg.offset() > hw + 1:
                     self.logger.warning("consumer: Lost messages, now at {} "
                                         "[{}] at offset {} (headers {}): "
                                         "expected offset {}+1 (last committed {})".format(
                                             msg.topic(), msg.partition(),
                                             msg.offset(), msg.headers(), hw,
                                             self.last_committed))
-                    self.msg_miss_cnt += msg.offset() - (hw + 1)
+                    with self.metrics_lock:
+                        self.msg_miss_cnt += msg.offset() - (hw + 1)
 
             hwmarks[hwkey] = msg.offset()
+            with self.metrics_lock:
+                self.partition_hwmarks[hwkey] = msg.offset()
 
         self.consumer.close()
         self.consumer_stats()
@@ -240,20 +287,27 @@ class SoakClient (object):
     def consumer_error_cb(self, err):
         """ Consumer error callback """
         self.logger.error("consumer: error_cb: {}".format(err))
-        self.consumer_error_cb_cnt += 1
+        with self.metrics_lock:
+            self.consumer_error_cb_cnt += 1
+            self.consumer_error_cb_histogram[str(err.code())] += 1
 
     def consumer_commit_cb(self, err, partitions):
         """ Auto commit result callback """
         if err is not None:
             self.logger.error("consumer: offset commit failed for {}: {}".format(partitions, err))
-            self.consumer_err_cnt += 1
+            with self.metrics_lock:
+                self.consumer_err_cnt += 1
+                self.commit_error_histogram[str(err.code())] += 1
         else:
-            self.last_committed = partitions
+            with self.metrics_lock:
+                self.last_committed = partitions
 
     def producer_error_cb(self, err):
         """ Producer error callback """
         self.logger.error("producer: error_cb: {}".format(err))
-        self.producer_error_cb_cnt += 1
+        with self.metrics_lock:
+            self.producer_error_cb_cnt += 1
+            self.producer_error_cb_histogram[str(err.code())] += 1
 
     def stats_cb(self, json_str):
         """ Common statistics callback.
@@ -280,30 +334,57 @@ class SoakClient (object):
         fs = admin.create_topics([NewTopic(topic, num_partitions=2, replication_factor=3)])
         f = fs[topic]
         try:
-            res = f.result()  # noqa unused variable
+            res = f.result(timeout=self.create_topic_timeout_seconds)  # noqa unused variable
         except KafkaException as ex:
             if ex.args[0].code() == KafkaError.TOPIC_ALREADY_EXISTS:
                 self.logger.info("Topic {} already exists: good".format(topic))
             else:
                 raise
 
-    def __init__(self, topic, rate, conf):
+    def __init__(self, topic, rate, conf, create_topic_timeout_seconds=30, skip_topic_create=False,
+                 client_mode="r", message_prefix="red-soak", message_marker="", check_offset_gaps=False):
         """ SoakClient constructor. conf is the client configuration """
         self.topic = topic
         self.rate = rate
         self.disprate = int(rate * 10)
         self.run = True
+        self.failed_reason = None
+        self.metrics_lock = threading.Lock()
         self.stats_cnt = {'producer': 0, 'consumer': 0}
         self.start_time = time.time()
+        self.last_progress_ts = self.start_time
+        self.last_metrics = {'delivered': 0, 'consumed': 0}
+        self.message_prefix = message_prefix
+        self.check_offset_gaps = check_offset_gaps
+        if message_marker:
+            self.message_marker = message_marker
+        else:
+            self.message_marker = "{}-{}".format(self.message_prefix, uuid.uuid4().hex[:12])
+        self.create_topic_timeout_seconds = create_topic_timeout_seconds
+        self.last_produced_msgid = -1
+        self.last_delivered_msgid = -1
+        self.last_consumed_msgid = -1
+        self.partition_hwmarks = {}
+        self.delivery_error_histogram = defaultdict(int)
+        self.consumer_poll_error_histogram = defaultdict(int)
+        self.consumer_error_cb_histogram = defaultdict(int)
+        self.producer_error_cb_histogram = defaultdict(int)
+        self.commit_error_histogram = defaultdict(int)
+        self.deserialize_error_histogram = defaultdict(int)
+        self.msg_foreign_cnt = 0
 
         self.logger = logging.getLogger('soakclient')
         self.logger.setLevel(logging.DEBUG)
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter('%(asctime)-15s %(levelname)-8s %(message)s'))
         self.logger.addHandler(handler)
+        self.logger.info("message prefix: {}".format(self.message_prefix))
+        self.logger.info("message marker: {}".format(self.message_marker))
+        self.logger.info("offset gap check: {}".format("enabled" if self.check_offset_gaps else "disabled"))
 
         # Create topic (might already exist)
-        self.create_topic(self.topic, conf)
+        if not skip_topic_create:
+            self.create_topic(self.topic, conf)
 
         #
         # Create Producer and Consumer, each running in its own thread.
@@ -311,21 +392,123 @@ class SoakClient (object):
         conf['stats_cb'] = self.stats_cb
         conf['statistics.interval.ms'] = 10000
 
+        if client_mode == "r":
+            producer_cls = RProducer
+            consumer_cls = RConsumer
+        elif client_mode == "classic":
+            producer_cls = Producer
+            consumer_cls = Consumer
+        else:
+            raise ValueError("Unknown client mode: {}".format(client_mode))
+
+        self.logger.info("client mode: {}".format(client_mode))
+
         # Producer
         conf['error_cb'] = self.producer_error_cb
-        self.producer = Producer(conf)
+        self.producer = producer_cls(conf)
 
         # Consumer
         conf['error_cb'] = self.consumer_error_cb
         conf['on_commit'] = self.consumer_commit_cb
         self.logger.info("consumer: using group.id {}".format(conf['group.id']))
-        self.consumer = Consumer(conf)
+        self.consumer = consumer_cls(conf)
 
         self.producer_thread = threading.Thread(target=self.producer_thread_main)
         self.producer_thread.start()
 
         self.consumer_thread = threading.Thread(target=self.consumer_thread_main)
         self.consumer_thread.start()
+
+    def metrics(self):
+        with self.metrics_lock:
+            produced = getattr(self, 'producer_msgid', 0)
+            delivered = getattr(self, 'dr_cnt', 0)
+            consumed = getattr(self, 'msg_cnt', 0)
+            delivery_errors = getattr(self, 'dr_err_cnt', 0)
+            consumer_errors = getattr(self, 'consumer_err_cnt', 0)
+            consumed_msgid = self.last_consumed_msgid
+            produced_msgid = self.last_produced_msgid
+            end_to_end_lag = None
+            if consumed_msgid >= 0 and produced_msgid >= 0:
+                end_to_end_lag = max(produced_msgid - consumed_msgid, 0)
+
+            return {
+                'runtime_seconds': int(time.time() - self.start_time),
+                'produced': produced,
+                'delivered': delivered,
+                'delivery_errors': delivery_errors,
+                'producer_error_callbacks': getattr(self, 'producer_error_cb_cnt', 0),
+                'consumed': consumed,
+                'consumer_errors': consumer_errors,
+                'consumer_error_callbacks': getattr(self, 'consumer_error_cb_cnt', 0),
+                'message_errors': getattr(self, 'msg_err_cnt', 0),
+                'duplicates': getattr(self, 'msg_dup_cnt', 0),
+                'missing': getattr(self, 'msg_miss_cnt', 0),
+                'foreign_messages_skipped': getattr(self, 'msg_foreign_cnt', 0),
+                'last_produced_msgid': produced_msgid,
+                'last_delivered_msgid': self.last_delivered_msgid,
+                'last_consumed_msgid': consumed_msgid,
+                'end_to_end_lag_messages': end_to_end_lag,
+                'last_progress_age_seconds': int(time.time() - self.last_progress_ts),
+                'message_prefix': self.message_prefix,
+                'message_marker': self.message_marker,
+                'partition_hwmarks': dict(self.partition_hwmarks),
+                'error_histograms': {
+                    'delivery_errors': dict(self.delivery_error_histogram),
+                    'consumer_poll_errors': dict(self.consumer_poll_error_histogram),
+                    'consumer_error_callbacks': dict(self.consumer_error_cb_histogram),
+                    'producer_error_callbacks': dict(self.producer_error_cb_histogram),
+                    'commit_errors': dict(self.commit_error_histogram),
+                    'deserialize_errors': dict(self.deserialize_error_histogram)
+                }
+            }
+
+    def diagnostic_snapshot(self, reason):
+        return {
+            'timestamp': int(time.time()),
+            'reason': reason,
+            'metrics': self.metrics()
+        }
+
+    def emit_diagnostic(self, reason, diagnostic_file=None):
+        snapshot = self.diagnostic_snapshot(reason)
+        snapshot_json = json.dumps(snapshot, sort_keys=True)
+        self.logger.info("diagnostic: {}".format(snapshot_json))
+
+        if diagnostic_file is None:
+            return
+
+        with open(diagnostic_file, "a") as f:
+            f.write(snapshot_json)
+            f.write("\n")
+
+    def check_readiness(self, max_no_progress_seconds):
+        current = self.metrics()
+        progressed = (current['delivered'] > self.last_metrics['delivered'] or
+                      current['consumed'] > self.last_metrics['consumed'])
+
+        if progressed:
+            self.last_progress_ts = time.time()
+
+        self.last_metrics = {
+            'delivered': current['delivered'],
+            'consumed': current['consumed']
+        }
+
+        if (time.time() - self.last_progress_ts) > max_no_progress_seconds:
+            self.failed_reason = (
+                "No delivery/consume progress for {}s "
+                "(produced={}, delivered={}, consumed={}, delivery_errors={}, consumer_errors={})".format(
+                    max_no_progress_seconds,
+                    current['produced'],
+                    current['delivered'],
+                    current['consumed'],
+                    current['delivery_errors'],
+                    current['consumer_errors']))
+            self.run = False
+            return False
+
+        return True
 
     def terminate(self):
         """ Terminate Producer and Consumer """
@@ -338,11 +521,49 @@ class SoakClient (object):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Kafka client soak test')
-    parser.add_argument('-b', dest='brokers', type=str, default=None, help='Bootstrap servers')
-    parser.add_argument('-t', dest='topic', type=str, required=True, help='Topic to use')
+    parser.add_argument('-b', dest='brokers', type=str,
+                        default='10.13.10.79:9092,10.32.12.69:9092,10.13.2.94:9092',
+                        help='Bootstrap servers')
+    parser.add_argument('-t', dest='topic', type=str, default='mcft_topic_p10', help='Topic to use')
+    parser.add_argument('--group', dest='group', type=str, default='',
+                        help='Consumer group id (auto-generated if empty)')
+    parser.add_argument('--offset-reset', dest='offset_reset', type=str, default='latest',
+                        choices=['earliest', 'latest'],
+                        help='auto.offset.reset policy when group has no committed offsets')
     parser.add_argument('-r', dest='rate', type=float, default=10, help='Message produce rate per second')
     parser.add_argument('-f', dest='conffile', type=argparse.FileType('r'),
                         help='Configuration file (configprop=value format)')
+    parser.add_argument('--duration-seconds', dest='duration_seconds', type=int, default=0,
+                        help='Run duration in seconds (0 means run until interrupted)')
+    parser.add_argument('--max-no-progress-seconds', dest='max_no_progress_seconds', type=int, default=300,
+                        help='Fail if neither delivery nor consume count progresses within this many seconds')
+    parser.add_argument('--health-check-interval-seconds', dest='health_check_interval_seconds',
+                        type=int, default=10,
+                        help='Health check interval in seconds')
+    parser.add_argument('--diagnostic-interval-seconds', dest='diagnostic_interval_seconds',
+                        type=int, default=300,
+                        help='Periodic diagnostics emit interval in seconds (0 disables)')
+    parser.add_argument('--diagnostic-file', dest='diagnostic_file', type=str, default=None,
+                        help='Append JSON diagnostic snapshots to this file')
+    parser.add_argument('--create-topic-timeout-seconds', dest='create_topic_timeout_seconds',
+                        type=int, default=30,
+                        help='Admin create-topic timeout in seconds')
+    parser.add_argument('--skip-topic-create', dest='skip_topic_create', action='store_true',
+                        help='Skip startup topic creation')
+    parser.add_argument('--client-mode', dest='client_mode', type=str, default='r',
+                        choices=['r', 'classic'],
+                        help='Client implementation mode: r uses RProducer/RConsumer, '
+                             'classic uses Producer/Consumer')
+    parser.add_argument('--message-prefix', dest='message_prefix', type=str, default='red-soak',
+                        help='Prefix tag for produced messages')
+    parser.add_argument('--message-marker', dest='message_marker', type=str, default='',
+                        help='Message marker used for consumer-side filtering (auto-generated if empty)')
+    parser.add_argument('--check-offset-gaps', dest='check_offset_gaps', action='store_true',
+                        help='Enable strict partition offset gap checks (for dedicated topics)')
+    parser.add_argument('--metrics-env-config', dest='metrics_env_config', type=str, default='',
+                        help='env.config passed to RProducer/RConsumer for metrics URL resolution')
+    parser.add_argument('--metrics-collect-url', dest='metrics_collect_url', type=str, default='',
+                        help='metrics.collect.url passed to RProducer/RConsumer (overrides env-config)')
 
     args = parser.parse_args()
 
@@ -368,27 +589,75 @@ if __name__ == '__main__':
         # brokers from -b command line argument
         conf['bootstrap.servers'] = args.brokers
 
-    if 'group.id' not in conf:
-        # Generate a group.id bound to this client and python version
-        conf['group.id'] = 'soakclient.py-{}-{}'.format(version()[0], sys.version.split(' ')[0])
+    if args.group:
+        conf['group.id'] = args.group
+    elif 'group.id' not in conf:
+        conf['group.id'] = 'red-soak-{}-{}'.format(version()[0], int(time.time()))
+
+    if 'auto.offset.reset' not in conf:
+        conf['auto.offset.reset'] = args.offset_reset
+
+    if args.client_mode == "r":
+        if args.metrics_env_config and 'env.config' not in conf:
+            conf['env.config'] = args.metrics_env_config
+        if args.metrics_collect_url and 'metrics.collect.url' not in conf:
+            conf['metrics.collect.url'] = args.metrics_collect_url
 
     # We don't care about partition EOFs
     conf['enable.partition.eof'] = False
 
     # Create SoakClient
-    soak = SoakClient(args.topic, args.rate, conf)
+    soak = SoakClient(args.topic, args.rate, conf,
+                      create_topic_timeout_seconds=args.create_topic_timeout_seconds,
+                      skip_topic_create=args.skip_topic_create,
+                      client_mode=args.client_mode,
+                      message_prefix=args.message_prefix,
+                      message_marker=args.message_marker,
+                      check_offset_gaps=args.check_offset_gaps)
+    next_diagnostic_time = time.time() + args.diagnostic_interval_seconds
 
-    # Run until interrupted
+    # Run until interrupted or until duration is reached.
     try:
         while soak.run:
-            time.sleep(10)
+            time.sleep(args.health_check_interval_seconds)
+
+            if not soak.check_readiness(args.max_no_progress_seconds):
+                soak.logger.error("Readiness check failed: {}".format(soak.failed_reason))
+                soak.emit_diagnostic("readiness-failed", args.diagnostic_file)
+                break
+
+            if args.duration_seconds > 0:
+                runtime = int(time.time() - soak.start_time)
+                if runtime >= args.duration_seconds:
+                    soak.logger.info("Reached target duration: {}s".format(args.duration_seconds))
+                    soak.emit_diagnostic("duration-reached", args.diagnostic_file)
+                    break
+
+            if args.diagnostic_interval_seconds > 0 and time.time() >= next_diagnostic_time:
+                soak.emit_diagnostic("periodic", args.diagnostic_file)
+                next_diagnostic_time = time.time() + args.diagnostic_interval_seconds
 
         soak.logger.info("Soak client aborted")
 
     except (KeyboardInterrupt):
         soak.logger.info("Interrupted by user")
+        soak.emit_diagnostic("interrupted", args.diagnostic_file)
     except Exception as e:
         soak.logger.error("Fatal exception {}".format(e))
+        soak.emit_diagnostic("fatal-exception", args.diagnostic_file)
 
     # Terminate
     soak.terminate()
+
+    if soak.failed_reason is not None:
+        soak.logger.error("Soak test failed: {}".format(soak.failed_reason))
+        sys.exit(2)
+
+    summary = soak.metrics()
+    soak.logger.info("Soak test passed: produced={}, delivered={}, consumed={}, delivery_errors={}, "
+                     "consumer_errors={}".format(summary['produced'],
+                                                 summary['delivered'],
+                                                 summary['consumed'],
+                                                 summary['delivery_errors'],
+                                                 summary['consumer_errors']))
+    soak.emit_diagnostic("passed", args.diagnostic_file)

@@ -188,3 +188,26 @@ def test_set_invalid_partitioner_murmur():
     with pytest.raises(KafkaException) as ex:
         Producer({'partitioner': 'murmur'})
     assert ex.match('Invalid value for configuration property "partitioner": murmur')
+
+
+def test_delivery_callback_exception_is_propagated():
+    delivery_reports = []
+
+    def delivery_cb_that_raises(err, msg):
+        delivery_reports.append((err, msg))
+        raise RuntimeError("delivery callback failure")
+
+    producer = Producer({
+        'bootstrap.servers': 'nonexistent-broker:9092',
+        'socket.timeout.ms': 100,
+        'message.timeout.ms': 10,
+        'on_delivery': delivery_cb_that_raises
+    })
+
+    producer.produce('test-topic', value='test-message')
+
+    with pytest.raises(RuntimeError) as ex:
+        producer.flush(timeout=2.0)
+
+    assert ex.match('delivery callback failure')
+    assert len(delivery_reports) > 0

@@ -806,7 +806,7 @@ static PyObject *TopicPartition_str0 (TopicPartition *self) {
         }
 
 	ret = cfl_PyUnistr(
-		_FromFormat("TopicPartition{topic=%s,partition=%"CFL_PRId32
+		_FromFormat("TopicPartition{topic=%s,partition=%d"
 			    ",offset=%s,error=%s}",
 			    self->topic, self->partition,
 			    offset_str,
@@ -1195,6 +1195,7 @@ PyObject *c_headers_to_py (rd_kafka_headers_t *headers) {
                         cfl_PyBin(_FromStringAndSize(header_value, header_value_size))
                     );
             } else {
+                Py_INCREF(Py_None);
                 PyTuple_SetItem(header_tuple, 1, Py_None);
             }
         PyList_SET_ITEM(header_list, idx-1, header_tuple);
@@ -1242,6 +1243,7 @@ static void error_cb (rd_kafka_t *rk, int err, const char *reason, void *opaque)
 	if (result)
 		Py_DECREF(result);
 	else {
+		CallState_fetch_exception(cs);
         crash:
 		CallState_crash(cs);
 		rd_kafka_yield(h->rk);
@@ -1295,6 +1297,8 @@ static void throttle_cb (rd_kafka_t *rk, const char *broker_name, int32_t broker
                 /* throttle_cb executed successfully */
                 Py_DECREF(result);
                 goto done;
+        } else {
+                CallState_fetch_exception(cs);
         }
 
         /**
@@ -1326,6 +1330,7 @@ static int stats_cb(rd_kafka_t *rk, char *json, size_t json_len, void *opaque) {
 	if (result)
 		Py_DECREF(result);
 	else {
+		CallState_fetch_exception(cs);
 		CallState_crash(cs);
 		rd_kafka_yield(h->rk);
 	}
@@ -1361,6 +1366,7 @@ static void log_cb (const rd_kafka_t *rk, int level,
         if (result)
                 Py_DECREF(result);
         else {
+                CallState_fetch_exception(cs);
                 CallState_crash(cs);
                 rd_kafka_yield(h->rk);
         }
@@ -1404,6 +1410,11 @@ void Handle_clear (Handle *h) {
                 h->logger = NULL;
         }
 
+        if (h->config_dump) {
+                Py_DECREF(h->config_dump);
+                h->config_dump = NULL;
+        }
+
         if (h->initiated) {
 #ifdef WITH_PY_TSS
                 PyThread_tss_delete(&h->tlskey);
@@ -1426,7 +1437,46 @@ int Handle_traverse (Handle *h, visitproc visit, void *arg) {
 	if (h->stats_cb)
 		Py_VISIT(h->stats_cb);
 
+        if (h->config_dump)
+                Py_VISIT(h->config_dump);
+
 	return 0;
+}
+
+static PyObject *common_conf_dump_to_pydict(rd_kafka_conf_t *conf) {
+        const char **arr = NULL;
+        size_t cnt = 0;
+        size_t i;
+        PyObject *dict = NULL;
+
+        arr = rd_kafka_conf_dump(conf, &cnt);
+        dict = PyDict_New();
+        if (!dict)
+                goto err;
+
+        if (!arr)
+                return dict;
+
+        for (i = 0 ; i + 1 < cnt ; i += 2) {
+                PyObject *key = cfl_PyUnistr(_FromString)(arr[i]);
+                PyObject *val = cfl_PyUnistr(_FromString)(arr[i+1]);
+                if (!key || !val || PyDict_SetItem(dict, key, val) == -1) {
+                        Py_XDECREF(key);
+                        Py_XDECREF(val);
+                        goto err;
+                }
+                Py_DECREF(key);
+                Py_DECREF(val);
+        }
+
+        rd_kafka_conf_dump_free(arr, cnt);
+        return dict;
+
+err:
+        if (arr)
+                rd_kafka_conf_dump_free(arr, cnt);
+        Py_XDECREF(dict);
+        return NULL;
 }
 
 /**
@@ -1846,6 +1896,15 @@ inner_err:
 
 	rd_kafka_conf_set_opaque(conf, h);
 
+        if (h->config_dump) {
+                Py_DECREF(h->config_dump);
+                h->config_dump = NULL;
+        }
+
+        h->config_dump = common_conf_dump_to_pydict(conf);
+        if (!h->config_dump)
+                goto outer_err;
+
 #ifdef WITH_PY_TSS
         if (PyThread_tss_create(&h->tlskey)) {
                 PyErr_SetString(PyExc_RuntimeError,
@@ -1879,6 +1938,7 @@ void CallState_begin (Handle *h, CallState *cs) {
 	cs->thread_state = PyEval_SaveThread();
 	assert(cs->thread_state != NULL);
 	cs->crashed = 0;
+	cs->exception_value = NULL;
 #ifdef WITH_PY_TSS
         PyThread_tss_set(&h->tlskey, cs);
 #else
@@ -1899,8 +1959,14 @@ int CallState_end (Handle *h, CallState *cs) {
 
 	PyEval_RestoreThread(cs->thread_state);
 
-	if (PyErr_CheckSignals() == -1 || cs->crashed)
+	if (PyErr_CheckSignals() == -1)
 		return 0;
+
+	if (cs->crashed) {
+		if (cs->exception_value)
+			CallState_restore_exception(cs);
+		return 0;
+	}
 
 	return 1;
 }
@@ -2193,7 +2259,7 @@ static PyObject *libversion (PyObject *self, PyObject *args) {
  * MM=major, mm=minor, RR=revision, PP=patchlevel (not used)
  */
 static PyObject *version (PyObject *self, PyObject *args) {
-	return Py_BuildValue("si", "1.3.0", 0x01030000);
+	return Py_BuildValue("si", CFL_PY_VERSION_STR, CFL_PY_VERSION_HEX);
 }
 
 static PyMethodDef cimpl_methods[] = {
@@ -2310,9 +2376,9 @@ static PyObject *_init_cimpl (void) {
 		return NULL;
 	if (PyType_Ready(&TopicPartitionType) < 0)
 		return NULL;
-	if (PyType_Ready(&ProducerType) < 0)
+	if (PyType_Ready(&CProducerType) < 0)
 		return NULL;
-	if (PyType_Ready(&ConsumerType) < 0)
+	if (PyType_Ready(&CConsumerType) < 0)
 		return NULL;
         if (PyType_Ready(&AdminType) < 0)
                 return NULL;
@@ -2341,11 +2407,11 @@ static PyObject *_init_cimpl (void) {
 	PyModule_AddObject(m, "TopicPartition",
 			   (PyObject *)&TopicPartitionType);
 
-	Py_INCREF(&ProducerType);
-	PyModule_AddObject(m, "Producer", (PyObject *)&ProducerType);
+	Py_INCREF(&CProducerType);
+	PyModule_AddObject(m, "CProducer", (PyObject *)&CProducerType);
 
-	Py_INCREF(&ConsumerType);
-	PyModule_AddObject(m, "Consumer", (PyObject *)&ConsumerType);
+	Py_INCREF(&CConsumerType);
+	PyModule_AddObject(m, "CConsumer", (PyObject *)&CConsumerType);
 
         Py_INCREF(&AdminType);
         PyModule_AddObject(m, "_AdminClientImpl", (PyObject *)&AdminType);

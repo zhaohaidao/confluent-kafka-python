@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import os
+import re
 from setuptools import setup, find_packages
 from distutils.core import Extension
 import platform
@@ -8,8 +9,49 @@ import platform
 INSTALL_REQUIRES = [
     'futures;python_version<"3.2"',
     'enum34;python_version<"3.4"',
-    'requests;python_version<"3.2"'
+    'requests',
 ]
+
+DEFAULT_PACKAGE_VERSION = '1.3.0'
+
+
+def read_sdist_version():
+    pkg_info_path = os.path.join(os.path.dirname(__file__), 'PKG-INFO')
+
+    if not os.path.exists(pkg_info_path):
+        return None
+
+    with open(pkg_info_path) as pkg_info:
+        for line in pkg_info:
+            if line.startswith('Version: '):
+                return line.split(': ', 1)[1].strip()
+
+    return None
+
+
+PACKAGE_VERSION = (
+    os.environ.get('RED_KAFKA_PACKAGE_VERSION')
+    or read_sdist_version()
+    or DEFAULT_PACKAGE_VERSION
+)
+
+
+def package_version_hex(version):
+    match = re.match(r'^(\d+)\.(\d+)(?:\.(\d+))?', version)
+    if match is None:
+        raise ValueError('invalid package version: %s' % version)
+
+    major = int(match.group(1))
+    minor = int(match.group(2))
+    patch = int(match.group(3) or 0)
+
+    if major > 255 or minor > 255 or patch > 255:
+        raise ValueError('package version out of range: %s' % version)
+
+    return '0x%02x%02x%02x00' % (major, minor, patch)
+
+
+PACKAGE_VERSION_HEX = package_version_hex(PACKAGE_VERSION)
 
 AVRO_REQUIRES = [
     'fastavro',
@@ -33,10 +75,14 @@ else:
     librdkafka_libname = 'rdkafka'
 
 module = Extension('confluent_kafka.cimpl',
+                   define_macros=[
+                       ('CFL_PY_VERSION_STR', '"%s"' % PACKAGE_VERSION),
+                       ('CFL_PY_VERSION_HEX', PACKAGE_VERSION_HEX),
+                   ],
                    libraries=[librdkafka_libname],
                    sources=['confluent_kafka/src/confluent_kafka.c',
-                            'confluent_kafka/src/Producer.c',
-                            'confluent_kafka/src/Consumer.c',
+                            'confluent_kafka/src/CProducer.c',
+                            'confluent_kafka/src/CConsumer.c',
                             'confluent_kafka/src/Metadata.c',
                             'confluent_kafka/src/AdminTypes.c',
                             'confluent_kafka/src/Admin.c'])
@@ -51,15 +97,17 @@ def get_install_requirements(path):
     ]
 
 
-setup(name='confluent-kafka',
-      version='1.3.0',
-      description='Confluent\'s Python client for Apache Kafka',
+setup(name='red-kafka',
+      version=PACKAGE_VERSION,
+      description='Red Kafka Python client for Apache Kafka',
       author='Confluent Inc',
       author_email='support@confluent.io',
       url='https://github.com/confluentinc/confluent-kafka-python',
       ext_modules=[module],
       packages=find_packages(exclude=("tests", "tests.*")),
+      exclude_package_data={'': ['__pycache__/*', '*.py[cod]']},
       data_files=[('', ['LICENSE.txt'])],
+      python_requires='>=3.11',
       install_requires=INSTALL_REQUIRES,
       extras_require={
           'avro': AVRO_REQUIRES,

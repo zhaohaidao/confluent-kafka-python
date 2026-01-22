@@ -346,7 +346,9 @@ rd_kafka_conf_t *common_conf_setup (rd_kafka_type_t ktype,
 PyObject *c_parts_to_py (const rd_kafka_topic_partition_list_t *c_parts);
 rd_kafka_topic_partition_list_t *py_to_c_parts (PyObject *plist);
 PyObject *list_topics (Handle *self, PyObject *args, PyObject *kwargs);
+PyObject *stats_collect (Handle *self, PyObject *ignore);
 extern const char list_topics_doc[];
+extern const char stats_collect_doc[];
 
 
 #ifdef RD_KAFKA_V_HEADERS

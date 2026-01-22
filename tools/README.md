@@ -26,6 +26,12 @@ Build using cibuildwheel:
 
     $ tools/cibuildwheel-build.sh wheelhouse
 
+To build against a local librdkafka source tree, set `RDKAFKA_SOURCE_DIR`:
+
+    $ RDKAFKA_SOURCE_DIR=/path/to/librdkafka tools/cibuildwheel-build.sh wheelhouse
+
+The build defaults to Python 3.10 only (override with `CIBW_BUILD` if needed).
+
 To skip Python platform configurations, use glob matching in CIBW_SKIP env.
 This example only builds for Python 2.7 x64:
 

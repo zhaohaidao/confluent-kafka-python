@@ -1,7 +1,7 @@
-Confluent's Python Client for Apache Kafka<sup>TM</sup>
-=======================================================
+Red Kafka Python Client for Apache Kafka<sup>TM</sup>
+====================================================
 
-**confluent-kafka-python** provides a high-level Producer, Consumer and AdminClient compatible with all
+**red-kafka** provides a high-level Producer, Consumer and AdminClient compatible with all
 [Apache Kafka<sup>TM<sup>](http://kafka.apache.org/) brokers >= v0.8, [Confluent Cloud](https://www.confluent.io/confluent-cloud/)
 and the [Confluent Platform](https://www.confluent.io/product/compare/). The client is:
 
@@ -207,22 +207,22 @@ Install
 
 **Install self-contained binary wheels**
 
-    $ pip install confluent-kafka
+    $ pip install red-kafka
 
 **NOTE:** The pre-built Linux wheels do NOT contain SASL Kerberos/GSSAPI support.
           If you need SASL Kerberos/GSSAPI support you must install librdkafka and
           its dependencies using the repositories below and then build
-          confluent-kafka  using the command in the "Install from
+          red-kafka using the command in the "Install from
           source from PyPi" section below.
 
 **Install AvroProducer and AvroConsumer**
 
-    $ pip install "confluent-kafka[avro]"
+    $ pip install "red-kafka[avro]"
 
 **Install from source from PyPi**
 *(requires librdkafka + dependencies to be installed separately)*:
 
-    $ pip install --no-binary :all: confluent-kafka
+    $ pip install --no-binary :all: red-kafka
 
 
 For source install, see *Prerequisites* below.

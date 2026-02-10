@@ -806,7 +806,7 @@ static PyObject *TopicPartition_str0 (TopicPartition *self) {
         }
 
 	ret = cfl_PyUnistr(
-		_FromFormat("TopicPartition{topic=%s,partition=%"CFL_PRId32
+		_FromFormat("TopicPartition{topic=%s,partition=%d"
 			    ",offset=%s,error=%s}",
 			    self->topic, self->partition,
 			    offset_str,
@@ -1195,6 +1195,7 @@ PyObject *c_headers_to_py (rd_kafka_headers_t *headers) {
                         cfl_PyBin(_FromStringAndSize(header_value, header_value_size))
                     );
             } else {
+                Py_INCREF(Py_None);
                 PyTuple_SetItem(header_tuple, 1, Py_None);
             }
         PyList_SET_ITEM(header_list, idx-1, header_tuple);

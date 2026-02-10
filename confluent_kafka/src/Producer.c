@@ -228,7 +228,7 @@ Producer_produce0 (Handle *self,
 static PyObject *Producer_produce (Handle *self, PyObject *args,
 				       PyObject *kwargs) {
 	const char *topic, *value = NULL, *key = NULL;
-	int value_len = 0, key_len = 0;
+	Py_ssize_t value_len = 0, key_len = 0;
 	int partition = RD_KAFKA_PARTITION_UA;
 	PyObject *headers = NULL, *dr_cb = NULL, *dr_cb2 = NULL;
         long long timestamp = 0;
@@ -293,6 +293,15 @@ static PyObject *Producer_produce (Handle *self, PyObject *args,
 	if (!dr_cb || dr_cb == Py_None)
 		dr_cb = self->u.Producer.default_dr_cb;
 
+        if (!self->rk) {
+#ifdef RD_KAFKA_V_HEADERS
+                if (rd_headers)
+                        rd_kafka_headers_destroy(rd_headers);
+#endif
+                PyErr_SetString(PyExc_RuntimeError, "Producer closed");
+                return NULL;
+        }
+
 	/* Create msgstate if necessary, may return NULL if no callbacks
 	 * are wanted. */
 	msgstate = Producer_msgstate_new(self, dr_cb);
@@ -317,6 +326,11 @@ static PyObject *Producer_produce (Handle *self, PyObject *args,
         if (err) {
 		if (msgstate)
 			Producer_msgstate_destroy(msgstate);
+
+#ifdef RD_KAFKA_V_HEADERS
+                if (rd_headers)
+                        rd_kafka_headers_destroy(rd_headers);
+#endif
 
 		if (err == RD_KAFKA_RESP_ERR__QUEUE_FULL)
 			PyErr_Format(PyExc_BufferError,
@@ -581,6 +595,4 @@ PyTypeObject ProducerType = {
 	0,                         /* tp_alloc */
 	Producer_new           /* tp_new */
 };
-
-
 

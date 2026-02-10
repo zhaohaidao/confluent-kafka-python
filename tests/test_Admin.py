@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+import sys
+
 import pytest
 
 from confluent_kafka.admin import AdminClient, NewTopic, NewPartitions, ConfigResource
@@ -16,6 +18,17 @@ def test_types():
         ConfigResource("doesnt exist", "hi")
     with pytest.raises(ValueError):
         ConfigResource(confluent_kafka.admin.RESOURCE_TOPIC, None)
+
+
+def test_new_topic_invalid_config_does_not_corrupt_input_object_refcount():
+    config = []
+    before = sys.getrefcount(config)
+
+    with pytest.raises(TypeError):
+        NewTopic("topic", 1, config=config)
+
+    after = sys.getrefcount(config)
+    assert after == before
 
 
 @pytest.mark.skipif(libversion()[1] < 0x000b0500,

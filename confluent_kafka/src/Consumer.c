@@ -420,6 +420,22 @@ static PyObject *Consumer_commit (Handle *self, PyObject *args,
 		}
 
 		m = (Message *)msg;
+                if (m->error && m->error != Py_None) {
+                        PyObject *errstr = NULL;
+                        PyObject *errstr8 = NULL;
+                        const char *c_errstr = NULL;
+
+                        errstr = cfl_PyObject_Unistr(m->error);
+                        if (errstr)
+                                c_errstr = cfl_PyUnistr_AsUTF8(errstr, &errstr8);
+
+                        cfl_PyErr_Format(RD_KAFKA_RESP_ERR__INVALID_ARG,
+                                         "Cannot commit offsets for message with error: '%s'",
+                                         c_errstr ? c_errstr : "unknown error");
+                        Py_XDECREF(errstr8);
+                        Py_XDECREF(errstr);
+                        return NULL;
+                }
 
 		c_offsets = rd_kafka_topic_partition_list_new(1);
 		rd_kafka_topic_partition_list_add(
@@ -546,6 +562,22 @@ static PyObject *Consumer_store_offsets (Handle *self, PyObject *args,
 		}
 
 		m = (Message *)msg;
+                if (m->error && m->error != Py_None) {
+                        PyObject *errstr = NULL;
+                        PyObject *errstr8 = NULL;
+                        const char *c_errstr = NULL;
+
+                        errstr = cfl_PyObject_Unistr(m->error);
+                        if (errstr)
+                                c_errstr = cfl_PyUnistr_AsUTF8(errstr, &errstr8);
+
+                        cfl_PyErr_Format(RD_KAFKA_RESP_ERR__INVALID_ARG,
+                                         "Cannot store offsets for message with error: '%s'",
+                                         c_errstr ? c_errstr : "unknown error");
+                        Py_XDECREF(errstr8);
+                        Py_XDECREF(errstr);
+                        return NULL;
+                }
 
 		c_offsets = rd_kafka_topic_partition_list_new(1);
 		rd_kafka_topic_partition_list_add(

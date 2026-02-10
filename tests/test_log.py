@@ -2,6 +2,8 @@
 
 import confluent_kafka
 import logging
+import pytest
+import time
 
 
 class CountingFilter(logging.Filter):
@@ -75,3 +77,28 @@ def test_logging_constructor():
             p.poll(timeout=0.5)
 
         print('%s: %s: %d log messages seen' % (how, f.name, f.cnt))
+
+
+class RaisingLogger(object):
+    def __init__(self):
+        self.raised = False
+
+    def log(self, *args):
+        if self.raised:
+            return
+
+        self.raised = True
+        raise RuntimeError("log callback failure")
+
+
+def test_logging_callback_exception_is_propagated():
+    logger = RaisingLogger()
+    producer = confluent_kafka.Producer({'debug': 'all'}, logger=logger)
+
+    with pytest.raises(RuntimeError) as ex:
+        deadline = time.time() + 10.0
+        while time.time() < deadline:
+            producer.poll(timeout=0.1)
+        pytest.fail("log callback was not triggered within timeout")
+
+    assert ex.match("log callback failure")

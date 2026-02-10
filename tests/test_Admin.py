@@ -267,3 +267,22 @@ def test_alter_configs_api():
     with pytest.raises(KafkaException):
         for f in concurrent.futures.as_completed(iter(fs.values())):
             f.result(timeout=1)
+
+
+@pytest.mark.skipif(libversion()[1] < 0x000b0500,
+                    reason="AdminAPI requires librdkafka >= v0.11.5")
+def test_admin_error_callback_exception_is_propagated():
+    def error_cb_that_raises(error):
+        raise RuntimeError("admin error callback failure")
+
+    admin = AdminClient({
+        'bootstrap.servers': 'nonexistent-broker:9092',
+        'socket.timeout.ms': 100,
+        'error_cb': error_cb_that_raises
+    })
+
+    with pytest.raises(RuntimeError) as ex:
+        for _ in range(30):
+            admin.poll(timeout=0.1)
+
+    assert ex.match('admin error callback failure')

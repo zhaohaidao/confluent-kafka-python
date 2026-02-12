@@ -34,6 +34,7 @@ import time
 import json
 import logging
 import sys
+import uuid
 
 
 class SoakRecord (object):
@@ -62,6 +63,14 @@ class SoakClient (object):
         the given rate, and a Consumer consuming the messages.
         Both clients print their message and error counters every 10 seconds.
     """
+
+    @staticmethod
+    def _header_to_str(value):
+        if value is None:
+            return None
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return str(value)
 
     def dr_cb(self, err, msg):
         """ Producer delivery report callback """
@@ -96,6 +105,8 @@ class SoakClient (object):
             try:
                 self.producer.produce(self.topic, value=record.serialize(),
                                       headers={"msgid": str(record.msgid),
+                                               "marker": self.message_marker,
+                                               "prefix": self.message_prefix,
                                                "time": str(time.time()),
                                                "txcnt": str(txcnt)},
                                       on_delivery=self.dr_cb)
@@ -199,6 +210,14 @@ class SoakClient (object):
                 with self.metrics_lock:
                     self.consumer_err_cnt += 1
                     self.consumer_poll_error_histogram[str(msg.error().code())] += 1
+                continue
+
+            headers = msg.headers() or []
+            headers_map = dict(headers)
+            marker = self._header_to_str(headers_map.get("marker"))
+            if marker != self.message_marker:
+                with self.metrics_lock:
+                    self.msg_foreign_cnt += 1
                 continue
 
             try:
@@ -323,7 +342,7 @@ class SoakClient (object):
                 raise
 
     def __init__(self, topic, rate, conf, create_topic_timeout_seconds=30, skip_topic_create=False,
-                 client_mode="r"):
+                 client_mode="r", message_prefix="red-soak", message_marker=""):
         """ SoakClient constructor. conf is the client configuration """
         self.topic = topic
         self.rate = rate
@@ -335,6 +354,11 @@ class SoakClient (object):
         self.start_time = time.time()
         self.last_progress_ts = self.start_time
         self.last_metrics = {'delivered': 0, 'consumed': 0}
+        self.message_prefix = message_prefix
+        if message_marker:
+            self.message_marker = message_marker
+        else:
+            self.message_marker = "{}-{}".format(self.message_prefix, uuid.uuid4().hex[:12])
         self.create_topic_timeout_seconds = create_topic_timeout_seconds
         self.last_produced_msgid = -1
         self.last_delivered_msgid = -1
@@ -346,12 +370,15 @@ class SoakClient (object):
         self.producer_error_cb_histogram = defaultdict(int)
         self.commit_error_histogram = defaultdict(int)
         self.deserialize_error_histogram = defaultdict(int)
+        self.msg_foreign_cnt = 0
 
         self.logger = logging.getLogger('soakclient')
         self.logger.setLevel(logging.DEBUG)
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter('%(asctime)-15s %(levelname)-8s %(message)s'))
         self.logger.addHandler(handler)
+        self.logger.info("message prefix: {}".format(self.message_prefix))
+        self.logger.info("message marker: {}".format(self.message_marker))
 
         # Create topic (might already exist)
         if not skip_topic_create:
@@ -415,11 +442,14 @@ class SoakClient (object):
                 'message_errors': getattr(self, 'msg_err_cnt', 0),
                 'duplicates': getattr(self, 'msg_dup_cnt', 0),
                 'missing': getattr(self, 'msg_miss_cnt', 0),
+                'foreign_messages_skipped': getattr(self, 'msg_foreign_cnt', 0),
                 'last_produced_msgid': produced_msgid,
                 'last_delivered_msgid': self.last_delivered_msgid,
                 'last_consumed_msgid': consumed_msgid,
                 'end_to_end_lag_messages': end_to_end_lag,
                 'last_progress_age_seconds': int(time.time() - self.last_progress_ts),
+                'message_prefix': self.message_prefix,
+                'message_marker': self.message_marker,
                 'partition_hwmarks': dict(self.partition_hwmarks),
                 'error_histograms': {
                     'delivery_errors': dict(self.delivery_error_histogram),
@@ -490,7 +520,12 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Kafka client soak test')
     parser.add_argument('-b', dest='brokers', type=str, default=None, help='Bootstrap servers')
-    parser.add_argument('-t', dest='topic', type=str, required=True, help='Topic to use')
+    parser.add_argument('-t', dest='topic', type=str, default='mcft_topic_p10', help='Topic to use')
+    parser.add_argument('--group', dest='group', type=str, default='',
+                        help='Consumer group id (auto-generated if empty)')
+    parser.add_argument('--offset-reset', dest='offset_reset', type=str, default='latest',
+                        choices=['earliest', 'latest'],
+                        help='auto.offset.reset policy when group has no committed offsets')
     parser.add_argument('-r', dest='rate', type=float, default=10, help='Message produce rate per second')
     parser.add_argument('-f', dest='conffile', type=argparse.FileType('r'),
                         help='Configuration file (configprop=value format)')
@@ -515,6 +550,10 @@ if __name__ == '__main__':
                         choices=['r', 'classic'],
                         help='Client implementation mode: r uses RProducer/RConsumer, '
                              'classic uses Producer/Consumer')
+    parser.add_argument('--message-prefix', dest='message_prefix', type=str, default='red-soak',
+                        help='Prefix tag for produced messages')
+    parser.add_argument('--message-marker', dest='message_marker', type=str, default='',
+                        help='Message marker used for consumer-side filtering (auto-generated if empty)')
 
     args = parser.parse_args()
 
@@ -540,9 +579,13 @@ if __name__ == '__main__':
         # brokers from -b command line argument
         conf['bootstrap.servers'] = args.brokers
 
-    if 'group.id' not in conf:
-        # Generate a group.id bound to this client and python version
-        conf['group.id'] = 'soakclient.py-{}-{}'.format(version()[0], sys.version.split(' ')[0])
+    if args.group:
+        conf['group.id'] = args.group
+    elif 'group.id' not in conf:
+        conf['group.id'] = 'red-soak-{}-{}'.format(version()[0], int(time.time()))
+
+    if 'auto.offset.reset' not in conf:
+        conf['auto.offset.reset'] = args.offset_reset
 
     # We don't care about partition EOFs
     conf['enable.partition.eof'] = False
@@ -551,7 +594,9 @@ if __name__ == '__main__':
     soak = SoakClient(args.topic, args.rate, conf,
                       create_topic_timeout_seconds=args.create_topic_timeout_seconds,
                       skip_topic_create=args.skip_topic_create,
-                      client_mode=args.client_mode)
+                      client_mode=args.client_mode,
+                      message_prefix=args.message_prefix,
+                      message_marker=args.message_marker)
     next_diagnostic_time = time.time() + args.diagnostic_interval_seconds
 
     # Run until interrupted or until duration is reached.

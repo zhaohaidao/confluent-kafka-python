@@ -19,7 +19,7 @@ RUN_DIR="${RUN_ROOT}/${RUN_ID}"
 mkdir -p "${RUN_DIR}"
 
 BROKERS="${SOAK_BOOTSTRAP_SERVERS:-localhost:9092}"
-TOPIC="${SOAK_TOPIC:-soak-basic-rw-readiness}"
+TOPIC="${SOAK_TOPIC:-mcft_topic_p10}"
 RATE="${SOAK_RATE:-20}"
 DURATION_SECONDS="${SOAK_DURATION_SECONDS:-259200}"
 MAX_NO_PROGRESS_SECONDS="${SOAK_MAX_NO_PROGRESS_SECONDS:-1800}"
@@ -28,6 +28,10 @@ DIAGNOSTIC_INTERVAL_SECONDS="${SOAK_DIAGNOSTIC_INTERVAL_SECONDS:-300}"
 CREATE_TOPIC_TIMEOUT_SECONDS="${SOAK_CREATE_TOPIC_TIMEOUT_SECONDS:-30}"
 SKIP_TOPIC_CREATE="${SOAK_SKIP_TOPIC_CREATE:-0}"
 CLIENT_MODE="${SOAK_CLIENT_MODE:-r}"
+MESSAGE_PREFIX="${SOAK_MESSAGE_PREFIX:-red-soak}"
+MESSAGE_MARKER="${SOAK_MESSAGE_MARKER:-}"
+GROUP="${SOAK_GROUP:-}"
+OFFSET_RESET="${SOAK_OFFSET_RESET:-latest}"
 WAIT_BROKER="${SOAK_WAIT_BROKER:-1}"
 BROKER_WAIT_INTERVAL_SECONDS="${SOAK_BROKER_WAIT_INTERVAL_SECONDS:-30}"
 
@@ -53,10 +57,20 @@ cmd=(
     --diagnostic-file "${DIAG_FILE}"
     --create-topic-timeout-seconds "${CREATE_TOPIC_TIMEOUT_SECONDS}"
     --client-mode "${CLIENT_MODE}"
+    --message-prefix "${MESSAGE_PREFIX}"
+    --offset-reset "${OFFSET_RESET}"
 )
 
 if [[ "${SKIP_TOPIC_CREATE}" == "1" ]]; then
     cmd+=(--skip-topic-create)
+fi
+
+if [[ -n "${MESSAGE_MARKER}" ]]; then
+    cmd+=(--message-marker "${MESSAGE_MARKER}")
+fi
+
+if [[ -n "${GROUP}" ]]; then
+    cmd+=(--group "${GROUP}")
 fi
 
 printf '%q ' "${cmd[@]}" > "${CMD_FILE}"

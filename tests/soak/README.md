@@ -2,6 +2,9 @@
 
 This directory contains a long-running basic read/write readiness test based on `soakclient.py`.
 
+By default `soakclient.py` uses `RProducer` and `RConsumer` (`--client-mode r`).
+You can switch to classic clients with `--client-mode classic`.
+
 ## 3-day readiness run
 
 Set up a Kafka cluster first, then run:
@@ -24,6 +27,7 @@ python tests/soak/soakclient.py \
   -b localhost:9092 \
   -t soak-basic-rw-readiness \
   -r 20 \
+  --client-mode r \
   --duration-seconds 259200 \
   --max-no-progress-seconds 300 \
   --health-check-interval-seconds 10 \
@@ -43,6 +47,7 @@ You can submit a background soak task with:
 ```bash
 SOAK_BOOTSTRAP_SERVERS=localhost:9092 \
 SOAK_TOPIC=soak-basic-rw-readiness \
+SOAK_CLIENT_MODE=r \
 SOAK_DURATION_SECONDS=259200 \
 SOAK_MAX_NO_PROGRESS_SECONDS=300 \
 SOAK_DIAGNOSTIC_INTERVAL_SECONDS=300 \

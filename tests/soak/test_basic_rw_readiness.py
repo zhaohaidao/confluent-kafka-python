@@ -21,6 +21,7 @@ def test_basic_rw_readiness():
     rate = os.environ.get("SOAK_RATE", "20")
     max_no_progress_seconds = os.environ.get("SOAK_MAX_NO_PROGRESS_SECONDS", "300")
     check_interval_seconds = os.environ.get("SOAK_CHECK_INTERVAL_SECONDS", "10")
+    client_mode = os.environ.get("SOAK_CLIENT_MODE", "r")
 
     cmd = [
         sys.executable,
@@ -31,6 +32,7 @@ def test_basic_rw_readiness():
         "--duration-seconds", str(duration_seconds),
         "--max-no-progress-seconds", str(max_no_progress_seconds),
         "--health-check-interval-seconds", str(check_interval_seconds),
+        "--client-mode", str(client_mode),
     ]
 
     proc = subprocess.run(cmd)

@@ -24,7 +24,7 @@
 #
 
 from confluent_kafka import KafkaError, KafkaException, version
-from confluent_kafka import Producer, Consumer
+from confluent_kafka import Producer, Consumer, RProducer, RConsumer
 from confluent_kafka.admin import AdminClient, NewTopic
 from collections import defaultdict
 from builtins import int
@@ -322,7 +322,8 @@ class SoakClient (object):
             else:
                 raise
 
-    def __init__(self, topic, rate, conf, create_topic_timeout_seconds=30, skip_topic_create=False):
+    def __init__(self, topic, rate, conf, create_topic_timeout_seconds=30, skip_topic_create=False,
+                 client_mode="r"):
         """ SoakClient constructor. conf is the client configuration """
         self.topic = topic
         self.rate = rate
@@ -362,15 +363,26 @@ class SoakClient (object):
         conf['stats_cb'] = self.stats_cb
         conf['statistics.interval.ms'] = 10000
 
+        if client_mode == "r":
+            producer_cls = RProducer
+            consumer_cls = RConsumer
+        elif client_mode == "classic":
+            producer_cls = Producer
+            consumer_cls = Consumer
+        else:
+            raise ValueError("Unknown client mode: {}".format(client_mode))
+
+        self.logger.info("client mode: {}".format(client_mode))
+
         # Producer
         conf['error_cb'] = self.producer_error_cb
-        self.producer = Producer(conf)
+        self.producer = producer_cls(conf)
 
         # Consumer
         conf['error_cb'] = self.consumer_error_cb
         conf['on_commit'] = self.consumer_commit_cb
         self.logger.info("consumer: using group.id {}".format(conf['group.id']))
-        self.consumer = Consumer(conf)
+        self.consumer = consumer_cls(conf)
 
         self.producer_thread = threading.Thread(target=self.producer_thread_main)
         self.producer_thread.start()
@@ -499,6 +511,10 @@ if __name__ == '__main__':
                         help='Admin create-topic timeout in seconds')
     parser.add_argument('--skip-topic-create', dest='skip_topic_create', action='store_true',
                         help='Skip startup topic creation')
+    parser.add_argument('--client-mode', dest='client_mode', type=str, default='r',
+                        choices=['r', 'classic'],
+                        help='Client implementation mode: r uses RProducer/RConsumer, '
+                             'classic uses Producer/Consumer')
 
     args = parser.parse_args()
 
@@ -534,7 +550,8 @@ if __name__ == '__main__':
     # Create SoakClient
     soak = SoakClient(args.topic, args.rate, conf,
                       create_topic_timeout_seconds=args.create_topic_timeout_seconds,
-                      skip_topic_create=args.skip_topic_create)
+                      skip_topic_create=args.skip_topic_create,
+                      client_mode=args.client_mode)
     next_diagnostic_time = time.time() + args.diagnostic_interval_seconds
 
     # Run until interrupted or until duration is reached.

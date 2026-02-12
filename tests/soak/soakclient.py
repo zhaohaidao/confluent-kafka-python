@@ -293,8 +293,11 @@ class SoakClient (object):
         self.rate = rate
         self.disprate = int(rate * 10)
         self.run = True
+        self.failed_reason = None
         self.stats_cnt = {'producer': 0, 'consumer': 0}
         self.start_time = time.time()
+        self.last_progress_ts = self.start_time
+        self.last_metrics = {'delivered': 0, 'consumed': 0}
 
         self.logger = logging.getLogger('soakclient')
         self.logger.setLevel(logging.DEBUG)
@@ -327,6 +330,43 @@ class SoakClient (object):
         self.consumer_thread = threading.Thread(target=self.consumer_thread_main)
         self.consumer_thread.start()
 
+    def metrics(self):
+        return {
+            'produced': getattr(self, 'producer_msgid', 0),
+            'delivered': getattr(self, 'dr_cnt', 0),
+            'delivery_errors': getattr(self, 'dr_err_cnt', 0),
+            'consumed': getattr(self, 'msg_cnt', 0),
+            'consumer_errors': getattr(self, 'consumer_err_cnt', 0)
+        }
+
+    def check_readiness(self, max_no_progress_seconds):
+        current = self.metrics()
+        progressed = (current['delivered'] > self.last_metrics['delivered'] or
+                      current['consumed'] > self.last_metrics['consumed'])
+
+        if progressed:
+            self.last_progress_ts = time.time()
+
+        self.last_metrics = {
+            'delivered': current['delivered'],
+            'consumed': current['consumed']
+        }
+
+        if (time.time() - self.last_progress_ts) > max_no_progress_seconds:
+            self.failed_reason = (
+                "No delivery/consume progress for {}s "
+                "(produced={}, delivered={}, consumed={}, delivery_errors={}, consumer_errors={})".format(
+                    max_no_progress_seconds,
+                    current['produced'],
+                    current['delivered'],
+                    current['consumed'],
+                    current['delivery_errors'],
+                    current['consumer_errors']))
+            self.run = False
+            return False
+
+        return True
+
     def terminate(self):
         """ Terminate Producer and Consumer """
         soak.logger.info("Terminating (ran for {}s)".format(time.time() - self.start_time))
@@ -343,6 +383,13 @@ if __name__ == '__main__':
     parser.add_argument('-r', dest='rate', type=float, default=10, help='Message produce rate per second')
     parser.add_argument('-f', dest='conffile', type=argparse.FileType('r'),
                         help='Configuration file (configprop=value format)')
+    parser.add_argument('--duration-seconds', dest='duration_seconds', type=int, default=0,
+                        help='Run duration in seconds (0 means run until interrupted)')
+    parser.add_argument('--max-no-progress-seconds', dest='max_no_progress_seconds', type=int, default=300,
+                        help='Fail if neither delivery nor consume count progresses within this many seconds')
+    parser.add_argument('--health-check-interval-seconds', dest='health_check_interval_seconds',
+                        type=int, default=10,
+                        help='Health check interval in seconds')
 
     args = parser.parse_args()
 
@@ -378,10 +425,20 @@ if __name__ == '__main__':
     # Create SoakClient
     soak = SoakClient(args.topic, args.rate, conf)
 
-    # Run until interrupted
+    # Run until interrupted or until duration is reached.
     try:
         while soak.run:
-            time.sleep(10)
+            time.sleep(args.health_check_interval_seconds)
+
+            if not soak.check_readiness(args.max_no_progress_seconds):
+                soak.logger.error("Readiness check failed: {}".format(soak.failed_reason))
+                break
+
+            if args.duration_seconds > 0:
+                runtime = int(time.time() - soak.start_time)
+                if runtime >= args.duration_seconds:
+                    soak.logger.info("Reached target duration: {}s".format(args.duration_seconds))
+                    break
 
         soak.logger.info("Soak client aborted")
 
@@ -392,3 +449,15 @@ if __name__ == '__main__':
 
     # Terminate
     soak.terminate()
+
+    if soak.failed_reason is not None:
+        soak.logger.error("Soak test failed: {}".format(soak.failed_reason))
+        sys.exit(2)
+
+    summary = soak.metrics()
+    soak.logger.info("Soak test passed: produced={}, delivered={}, consumed={}, delivery_errors={}, "
+                     "consumer_errors={}".format(summary['produced'],
+                                                 summary['delivered'],
+                                                 summary['consumed'],
+                                                 summary['delivery_errors'],
+                                                 summary['consumer_errors']))

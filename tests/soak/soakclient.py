@@ -519,7 +519,9 @@ class SoakClient (object):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Kafka client soak test')
-    parser.add_argument('-b', dest='brokers', type=str, default=None, help='Bootstrap servers')
+    parser.add_argument('-b', dest='brokers', type=str,
+                        default='10.13.10.79:9092,10.32.12.69:9092,10.13.2.94:9092',
+                        help='Bootstrap servers')
     parser.add_argument('-t', dest='topic', type=str, default='mcft_topic_p10', help='Topic to use')
     parser.add_argument('--group', dest='group', type=str, default='',
                         help='Consumer group id (auto-generated if empty)')

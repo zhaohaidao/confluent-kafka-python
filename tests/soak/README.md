@@ -14,7 +14,7 @@ Set up a Kafka cluster first, then run:
 
 ```bash
 RUN_SOAK_READINESS=1 \
-SOAK_BOOTSTRAP_SERVERS=localhost:9092 \
+SOAK_BOOTSTRAP_SERVERS=10.13.10.79:9092,10.32.12.69:9092,10.13.2.94:9092 \
 SOAK_TOPIC=mcft_topic_p10 \
 SOAK_DURATION_SECONDS=259200 \
 SOAK_RATE=20 \
@@ -27,7 +27,7 @@ pytest -q -rs tests/soak/test_basic_rw_readiness.py
 
 ```bash
 python tests/soak/soakclient.py \
-  -b localhost:9092 \
+  -b 10.13.10.79:9092,10.32.12.69:9092,10.13.2.94:9092 \
   -t mcft_topic_p10 \
   -r 20 \
   --client-mode r \
@@ -50,7 +50,7 @@ python tests/soak/soakclient.py \
 You can submit a background soak task with:
 
 ```bash
-SOAK_BOOTSTRAP_SERVERS=localhost:9092 \
+SOAK_BOOTSTRAP_SERVERS=10.13.10.79:9092,10.32.12.69:9092,10.13.2.94:9092 \
 SOAK_TOPIC=mcft_topic_p10 \
 SOAK_CLIENT_MODE=r \
 SOAK_MESSAGE_PREFIX=red-soak \

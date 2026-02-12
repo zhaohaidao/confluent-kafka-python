@@ -86,11 +86,24 @@ CMD_FILE="__CMD_FILE__"
 LOG_FILE="__LOG_FILE__"
 
 if [[ "${WAIT_BROKER}" == "1" ]]; then
-  host="${BROKERS%%:*}"
-  port="${BROKERS##*:}"
+  IFS=',' read -r -a brokers <<< "${BROKERS}"
   while true; do
-    if timeout 2 bash -lc "</dev/tcp/${host}/${port}" >/dev/null 2>&1; then
-      echo "$(date -Is) broker ${BROKERS} is reachable, starting soak client" >> "${LOG_FILE}"
+    reachable=""
+    for broker in "${brokers[@]}"; do
+      broker="${broker// /}"
+      if [[ -z "${broker}" ]]; then
+        continue
+      fi
+      host="${broker%%:*}"
+      port="${broker##*:}"
+      if timeout 2 bash -lc "</dev/tcp/${host}/${port}" >/dev/null 2>&1; then
+        reachable="${broker}"
+        break
+      fi
+    done
+
+    if [[ -n "${reachable}" ]]; then
+      echo "$(date -Is) broker ${reachable} is reachable, starting soak client" >> "${LOG_FILE}"
       break
     fi
     echo "$(date -Is) waiting for broker ${BROKERS}..." >> "${LOG_FILE}"

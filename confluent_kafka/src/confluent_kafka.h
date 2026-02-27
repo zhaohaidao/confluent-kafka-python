@@ -442,7 +442,7 @@ PyObject *Message_error (Message *self, PyObject *ignore);
  *
  ****************************************************************************/
 
-extern PyTypeObject ProducerType;
+extern PyTypeObject CProducerType;
 
 
 /****************************************************************************
@@ -455,7 +455,7 @@ extern PyTypeObject ProducerType;
  *
  ****************************************************************************/
 
-extern PyTypeObject ConsumerType;
+extern PyTypeObject CConsumerType;
 
 
 /****************************************************************************

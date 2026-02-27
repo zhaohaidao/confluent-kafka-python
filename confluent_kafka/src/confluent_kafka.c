@@ -2376,9 +2376,9 @@ static PyObject *_init_cimpl (void) {
 		return NULL;
 	if (PyType_Ready(&TopicPartitionType) < 0)
 		return NULL;
-	if (PyType_Ready(&ProducerType) < 0)
+	if (PyType_Ready(&CProducerType) < 0)
 		return NULL;
-	if (PyType_Ready(&ConsumerType) < 0)
+	if (PyType_Ready(&CConsumerType) < 0)
 		return NULL;
         if (PyType_Ready(&AdminType) < 0)
                 return NULL;
@@ -2407,11 +2407,11 @@ static PyObject *_init_cimpl (void) {
 	PyModule_AddObject(m, "TopicPartition",
 			   (PyObject *)&TopicPartitionType);
 
-	Py_INCREF(&ProducerType);
-	PyModule_AddObject(m, "Producer", (PyObject *)&ProducerType);
+	Py_INCREF(&CProducerType);
+	PyModule_AddObject(m, "CProducer", (PyObject *)&CProducerType);
 
-	Py_INCREF(&ConsumerType);
-	PyModule_AddObject(m, "Consumer", (PyObject *)&ConsumerType);
+	Py_INCREF(&CConsumerType);
+	PyModule_AddObject(m, "CConsumer", (PyObject *)&CConsumerType);
 
         Py_INCREF(&AdminType);
         PyModule_AddObject(m, "_AdminClientImpl", (PyObject *)&AdminType);

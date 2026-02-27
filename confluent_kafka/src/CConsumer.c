@@ -1439,9 +1439,9 @@ static PyObject *Consumer_new (PyTypeObject *type, PyObject *args,
 }
 
 
-PyTypeObject ConsumerType = {
+PyTypeObject CConsumerType = {
 	PyVarObject_HEAD_INIT(NULL, 0)
-	"cimpl.Consumer",        /*tp_name*/
+	"cimpl.CConsumer",       /*tp_name*/
 	sizeof(Handle),          /*tp_basicsize*/
 	0,                         /*tp_itemsize*/
 	(destructor)Consumer_dealloc, /*tp_dealloc*/
@@ -1463,7 +1463,7 @@ PyTypeObject ConsumerType = {
 	Py_TPFLAGS_HAVE_GC, /*tp_flags*/
         "A high-level Apache Kafka Consumer\n"
         "\n"
-        ".. py:function:: Consumer(config)\n"
+        ".. py:function:: CConsumer(config)\n"
         "\n"
         "Create a new Consumer instance using the provided configuration *dict* ("
         "including properties and callback functions). "

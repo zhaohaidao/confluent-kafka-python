@@ -1,55 +1,85 @@
-from .cimpl import Consumer as _Consumer
-from .cimpl import Producer as _Producer
+from .cimpl import CConsumer as _CConsumer
+from .cimpl import CProducer as _CProducer
 from .red_eds import resolve_eds_bootstrap
 from .red_metrics import MetricsSender
 
 
-def _merge_conf(conf, kwargs):
+def _build_conf(conf, kwargs):
     if conf is None:
+        if not kwargs:
+            raise TypeError("expected configuration dict")
         conf = {}
-    if not isinstance(conf, dict):
-        raise TypeError("conf must be a dict")
+    elif not isinstance(conf, dict):
+        raise TypeError("expected configuration dict")
+
     merged = dict(conf)
     merged.update(kwargs)
     return merged
 
 
-class _BaseClient:
-    def __init__(self, client, conf, client_type):
-        self._client = client
+class _MetricsClientMixin:
+    def _start_metrics(self, conf, client_type):
         self._conf = conf
-        self._metrics = MetricsSender(client, conf, client_type)
+        self._metrics = MetricsSender(self, conf, client_type, interval=30)
         self._metrics.start()
 
-    def __getattr__(self, name):
-        return getattr(self._client, name)
-
     def _stop_metrics(self):
-        if self._metrics is None:
+        metrics = getattr(self, "_metrics", None)
+        if metrics is None:
             return
-        self._metrics.stop()
+        metrics.stop()
         self._metrics = None
 
 
-class RProducer(_BaseClient):
+class Producer(_CProducer, _MetricsClientMixin):
+    """Producer client with RED extensions.
+
+    Args:
+        conf (dict): Producer configuration.
+        **kwargs: Additional producer configuration entries.
+    """
+
     def __init__(self, conf=None, **kwargs):
-        merged = _merge_conf(conf, kwargs)
+        merged = _build_conf(conf, kwargs)
         resolved = resolve_eds_bootstrap(merged)
-        client = _Producer(resolved)
-        super().__init__(client, resolved, "Producer")
+        super(Producer, self).__init__(resolved)
+        self._start_metrics(resolved, "Producer")
 
     def close(self, *args, **kwargs):
+        """Close producer and stop background metrics sender.
+
+        Args:
+            *args: Positional arguments forwarded to ``flush``.
+            **kwargs: Keyword arguments forwarded to ``flush``.
+        """
         self._stop_metrics()
-        return self._client.flush(*args, **kwargs)
+        return self.flush(*args, **kwargs)
 
 
-class RConsumer(_BaseClient):
+class Consumer(_CConsumer, _MetricsClientMixin):
+    """Consumer client with RED extensions.
+
+    Args:
+        conf (dict): Consumer configuration.
+        **kwargs: Additional consumer configuration entries.
+    """
+
     def __init__(self, conf=None, **kwargs):
-        merged = _merge_conf(conf, kwargs)
+        merged = _build_conf(conf, kwargs)
         resolved = resolve_eds_bootstrap(merged)
-        client = _Consumer(resolved)
-        super().__init__(client, resolved, "Consumer")
+        super(Consumer, self).__init__(resolved)
+        self._start_metrics(resolved, "Consumer")
 
     def close(self):
+        """Close consumer and stop background metrics sender.
+
+        Returns:
+            Any: Return value from ``Consumer.close``.
+        """
         self._stop_metrics()
-        return self._client.close()
+        return super(Consumer, self).close()
+
+
+# Backward-compatible aliases.
+RProducer = Producer
+RConsumer = Consumer

@@ -545,9 +545,9 @@ static PyObject *Producer_new (PyTypeObject *type, PyObject *args,
 
 
 
-PyTypeObject ProducerType = {
+PyTypeObject CProducerType = {
 	PyVarObject_HEAD_INIT(NULL, 0)
-	"cimpl.Producer",        /*tp_name*/
+	"cimpl.CProducer",       /*tp_name*/
 	sizeof(Handle),      /*tp_basicsize*/
 	0,                         /*tp_itemsize*/
 	(destructor)Producer_dealloc, /*tp_dealloc*/
@@ -569,7 +569,7 @@ PyTypeObject ProducerType = {
 	Py_TPFLAGS_HAVE_GC, /*tp_flags*/
         "Asynchronous Kafka Producer\n"
         "\n"
-        ".. py:function:: Producer(config)\n"
+        ".. py:function:: CProducer(config)\n"
         "\n"
         "  :param dict config: Configuration properties. At a minimum ``bootstrap.servers`` **should** be set\n"
         "\n"

@@ -35,8 +35,8 @@ else:
 module = Extension('confluent_kafka.cimpl',
                    libraries=[librdkafka_libname],
                    sources=['confluent_kafka/src/confluent_kafka.c',
-                            'confluent_kafka/src/Producer.c',
-                            'confluent_kafka/src/Consumer.c',
+                            'confluent_kafka/src/CProducer.c',
+                            'confluent_kafka/src/CConsumer.c',
                             'confluent_kafka/src/Metadata.c',
                             'confluent_kafka/src/AdminTypes.c',
                             'confluent_kafka/src/Admin.c'])

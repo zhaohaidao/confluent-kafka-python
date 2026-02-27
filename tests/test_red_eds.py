@@ -13,6 +13,12 @@ class DummyEdsClient:
         return self._instances
 
 
+class DummyHttpResponse:
+    def __init__(self, status_code, text):
+        self.status_code = status_code
+        self.text = text
+
+
 def _set_env(monkeypatch):
     monkeypatch.setenv("XHS_ENV", "staging")
     monkeypatch.setenv("XHS_SERVICE", "svc")
@@ -59,3 +65,87 @@ def test_resolve_eds_missing_env(monkeypatch):
     conf = {"bootstrap.servers": "eds://kafka-eds-paastest"}
     with pytest.raises(red_eds.EdsResolveError):
         red_eds.resolve_eds_bootstrap(conf)
+
+
+def test_resolve_cluster_bootstrap(monkeypatch):
+    monkeypatch.setenv("JOB_ENV", "staging")
+    called = {}
+
+    def _fake_http_get(url, timeout):
+        called["url"] = url
+        called["timeout"] = timeout
+        return DummyHttpResponse(
+            200, '{"bootstrapStr":"10.0.0.2:9092,10.0.0.1:9092"}'
+        )
+
+    monkeypatch.setattr(red_eds, "_http_get", _fake_http_get)
+
+    conf = {"kafka.cluster.name": "kafka-main"}
+    resolved = red_eds.resolve_bootstrap(conf)
+
+    assert (
+        called["url"]
+        == "http://events.int.xiaohongshu.com/api/kmeta/cluster/kafka-main"
+    )
+    assert called["timeout"] == red_eds.KMETA_REQUEST_TIMEOUT_SECONDS
+    assert resolved["bootstrap.servers"] == "10.0.0.1:9092,10.0.0.2:9092"
+    assert resolved["original.metadata.broker.list"] == "cluster://kafka-main"
+    assert "kafka.cluster.name" not in resolved
+
+
+def test_cluster_security_bootstrap_enabled_by_conf(monkeypatch):
+    monkeypatch.setenv("JOB_ENV", "prod")
+    called = {}
+
+    def _fake_http_get(url, timeout):
+        called["url"] = url
+        called["timeout"] = timeout
+        return DummyHttpResponse(200, "10.1.1.1:9093")
+
+    monkeypatch.setattr(red_eds, "_http_get", _fake_http_get)
+
+    conf = {
+        "bootstrap.servers": "cluster://kafka-auth",
+        "sasl.jaas.config": (
+            "org.apache.kafka.common.security.plain.PlainLoginModule "
+            'required username="u" password="p";'
+        ),
+    }
+    resolved = red_eds.resolve_bootstrap(conf)
+
+    assert (
+        called["url"]
+        == "http://events.int.xiaohongshu.com/api/kmeta/cluster/security-bootstrap/kafka-auth"
+    )
+    assert called["timeout"] == red_eds.KMETA_REQUEST_TIMEOUT_SECONDS
+    assert resolved["bootstrap.servers"] == "10.1.1.1:9093"
+    assert resolved["original.metadata.broker.list"] == "cluster://kafka-auth"
+
+
+def test_cluster_security_bootstrap_enabled_by_env(monkeypatch):
+    monkeypatch.setenv("XHS_ENV", "sit")
+    monkeypatch.setenv("kafka_sasl_jaas_config", "env-jaas")
+    called = {}
+
+    def _fake_http_get(url, timeout):
+        called["url"] = url
+        called["timeout"] = timeout
+        return DummyHttpResponse(200, '"10.2.2.2:9093"')
+
+    monkeypatch.setattr(red_eds, "_http_get", _fake_http_get)
+
+    conf = {"kafka.cluster.name": "kafka-auth-by-env"}
+    resolved = red_eds.resolve_bootstrap(conf)
+
+    assert (
+        called["url"]
+        == "http://events.int.sit.xiaohongshu.com/api/kmeta/cluster/security-bootstrap/kafka-auth-by-env"
+    )
+    assert called["timeout"] == red_eds.KMETA_REQUEST_TIMEOUT_SECONDS
+    assert resolved["bootstrap.servers"] == "10.2.2.2:9093"
+
+
+def test_cluster_name_empty():
+    conf = {"bootstrap.servers": "cluster://"}
+    with pytest.raises(red_eds.KmetaResolveError):
+        red_eds.resolve_bootstrap(conf)

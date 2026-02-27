@@ -20,6 +20,22 @@ def test_types():
         ConfigResource(confluent_kafka.admin.RESOURCE_TOPIC, None)
 
 
+@pytest.mark.skipif(libversion()[1] < 0x000b0500,
+                    reason="AdminAPI requires librdkafka >= v0.11.5")
+def test_admin_init_uses_bootstrap_resolver(monkeypatch):
+    module = confluent_kafka.admin
+    called = {}
+
+    def _fake_resolve_bootstrap(conf):
+        called["conf"] = conf
+        return {"socket.timeout.ms": 10}
+
+    monkeypatch.setattr(module, "resolve_bootstrap", _fake_resolve_bootstrap)
+    client = AdminClient({"socket.timeout.ms": 10})
+    assert called["conf"] == {"socket.timeout.ms": 10}
+    assert client is not None
+
+
 def test_new_topic_invalid_config_does_not_corrupt_input_object_refcount():
     config = []
     before = sys.getrefcount(config)

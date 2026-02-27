@@ -1,6 +1,6 @@
 from .cimpl import CConsumer as _CConsumer
 from .cimpl import CProducer as _CProducer
-from .red_eds import resolve_eds_bootstrap
+from .red_eds import resolve_bootstrap
 from .red_metrics import MetricsSender
 
 
@@ -41,7 +41,7 @@ class Producer(_CProducer, _MetricsClientMixin):
 
     def __init__(self, conf=None, **kwargs):
         merged = _build_conf(conf, kwargs)
-        resolved = resolve_eds_bootstrap(merged)
+        resolved = resolve_bootstrap(merged)
         super(Producer, self).__init__(resolved)
         self._start_metrics(resolved, "Producer")
 
@@ -66,7 +66,7 @@ class Consumer(_CConsumer, _MetricsClientMixin):
 
     def __init__(self, conf=None, **kwargs):
         merged = _build_conf(conf, kwargs)
-        resolved = resolve_eds_bootstrap(merged)
+        resolved = resolve_bootstrap(merged)
         super(Consumer, self).__init__(resolved)
         self._start_metrics(resolved, "Consumer")
 

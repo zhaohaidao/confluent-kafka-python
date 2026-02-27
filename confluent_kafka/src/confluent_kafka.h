@@ -208,6 +208,7 @@ typedef struct {
         rd_kafka_type_t type; /* Producer or consumer */
 
         PyObject *logger;
+        PyObject *config_dump;
 
 	union {
 		/**
@@ -385,8 +386,10 @@ PyObject *c_parts_to_py (const rd_kafka_topic_partition_list_t *c_parts);
 rd_kafka_topic_partition_list_t *py_to_c_parts (PyObject *plist);
 PyObject *list_topics (Handle *self, PyObject *args, PyObject *kwargs);
 PyObject *stats_collect (Handle *self, PyObject *ignore);
+PyObject *config_dump (Handle *self, PyObject *ignore);
 extern const char list_topics_doc[];
 extern const char stats_collect_doc[];
+extern const char config_dump_doc[];
 
 
 #ifdef RD_KAFKA_V_HEADERS

@@ -418,6 +418,14 @@ stats_collect (Handle *self, PyObject *ignore) {
         return result;
 }
 
+PyObject *
+config_dump (Handle *self, PyObject *ignore) {
+        if (!self->config_dump)
+                Py_RETURN_NONE;
+
+        return PyDict_Copy(self->config_dump);
+}
+
 const char list_topics_doc[] = PyDoc_STR(
         ".. py:function:: list_topics([topic=None], [timeout=-1])\n"
         "\n"
@@ -438,3 +446,11 @@ const char stats_collect_doc[] = PyDoc_STR(
         "\n"
         "  :returns: stats JSON string or None on failure\n"
         "  :rtype: str\n");
+
+const char config_dump_doc[] = PyDoc_STR(
+        ".. py:function:: config_dump()\n"
+        "\n"
+        "  Retrieve effective librdkafka configuration as a dict snapshot.\n"
+        "\n"
+        "  :returns: config dict or None on failure\n"
+        "  :rtype: dict\n");

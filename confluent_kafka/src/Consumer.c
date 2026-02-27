@@ -1317,6 +1317,9 @@ static PyMethodDef Consumer_methods[] = {
         { "stats_collect", (PyCFunction)stats_collect, METH_NOARGS,
           stats_collect_doc
         },
+        { "config_dump", (PyCFunction)config_dump, METH_NOARGS,
+          config_dump_doc
+        },
 
 	{ NULL }
 };

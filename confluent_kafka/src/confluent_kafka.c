@@ -1410,6 +1410,11 @@ void Handle_clear (Handle *h) {
                 h->logger = NULL;
         }
 
+        if (h->config_dump) {
+                Py_DECREF(h->config_dump);
+                h->config_dump = NULL;
+        }
+
         if (h->initiated) {
 #ifdef WITH_PY_TSS
                 PyThread_tss_delete(&h->tlskey);
@@ -1432,7 +1437,46 @@ int Handle_traverse (Handle *h, visitproc visit, void *arg) {
 	if (h->stats_cb)
 		Py_VISIT(h->stats_cb);
 
+        if (h->config_dump)
+                Py_VISIT(h->config_dump);
+
 	return 0;
+}
+
+static PyObject *common_conf_dump_to_pydict(rd_kafka_conf_t *conf) {
+        const char **arr = NULL;
+        size_t cnt = 0;
+        size_t i;
+        PyObject *dict = NULL;
+
+        arr = rd_kafka_conf_dump(conf, &cnt);
+        dict = PyDict_New();
+        if (!dict)
+                goto err;
+
+        if (!arr)
+                return dict;
+
+        for (i = 0 ; i + 1 < cnt ; i += 2) {
+                PyObject *key = cfl_PyUnistr(_FromString)(arr[i]);
+                PyObject *val = cfl_PyUnistr(_FromString)(arr[i+1]);
+                if (!key || !val || PyDict_SetItem(dict, key, val) == -1) {
+                        Py_XDECREF(key);
+                        Py_XDECREF(val);
+                        goto err;
+                }
+                Py_DECREF(key);
+                Py_DECREF(val);
+        }
+
+        rd_kafka_conf_dump_free(arr, cnt);
+        return dict;
+
+err:
+        if (arr)
+                rd_kafka_conf_dump_free(arr, cnt);
+        Py_XDECREF(dict);
+        return NULL;
 }
 
 /**
@@ -1851,6 +1895,15 @@ inner_err:
         }
 
 	rd_kafka_conf_set_opaque(conf, h);
+
+        if (h->config_dump) {
+                Py_DECREF(h->config_dump);
+                h->config_dump = NULL;
+        }
+
+        h->config_dump = common_conf_dump_to_pydict(conf);
+        if (!h->config_dump)
+                goto outer_err;
 
 #ifdef WITH_PY_TSS
         if (PyThread_tss_create(&h->tlskey)) {

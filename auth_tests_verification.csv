@@ -1,0 +1,9 @@
+topic,group,账号密码,topic 管控,group 管控,允许匿名,预期效果,java SDK 效果（新版本）,java SDK 效果（旧版本）,python SDK 效果,C++ SDK 效果（新版本）,C++ SDK 效果（旧版本）
+test_acl_202601201117,test_acl_202601201117-test_01231345-consumer,udf_default_201=dWRmX2Rl+-/ZmF1bHQ,TRUE,TRUE,TRUE,写：实名：成功匿名：成功读：不带group+实名：失败不带group+匿名：成功带group+实名：成功带group+匿名：成功,示例（客户端行为：生产XX，消费XX 是否符合预期）【参考以上测试文档内容】：不带 group + 匿名：生产正常，消费正常 符合预期不带 group + 实名：生产正常，消费失败 符合预期带 group + 匿名：生产正常，消费正常 符合预期带 group + 实名：生产正常，消费正常 符合预期,,,,
+acl_test_202601201654,acl_test_202601201654-test_01272136-consumer,udf_default_201=dWRmX2Rl+-/ZmF1bHQ,TRUE,TRUE,FALSE,写：实名：成功匿名：失败读：不带group+实名：失败不带group+匿名：失败带group+实名：成功带group+匿名：失败,,,,,
+zhenghan_acl_test1,zhenghan_acl_test1-acl_test-consumer,udf_default_201=dWRmX2Rl+-/ZmF1bHQ,TRUE,FALSE,TRUE,写：实名：成功匿名：成功读：不带group+实名：成功不带group+匿名：成功带group+实名：成功带group+匿名：成功,,,,,
+zhenghan_acl_test2,zhenghan_acl_test2-acl_test-consumer,udf_default_201=dWRmX2Rl+-/ZmF1bHQ,TRUE,FALSE,FALSE,写：实名：成功匿名：失败读：不带group+实名：成功不带group+匿名：失败带group+实名：成功带group+匿名：失败,,,,,
+zhenghan_acl_test3,zhenghan_acl_test3-acl_test-consumer,udf_default_201=dWRmX2Rl+-/ZmF1bHQ,FALSE,TRUE,FALSE,写：实名：成功匿名：成功读：不带group+实名：成功不带group+匿名：成功带group+实名：成功带group+匿名：成功,,,,,
+zhenghan_acl_test4,zhenghan_acl_test4-acl_test-consumer,udf_default_201=dWRmX2Rl+-/ZmF1bHQ,FALSE,FALSE,FALSE,写：实名：成功匿名：成功读：不带group+实名：成功不带group+匿名：成功带group+实名：成功带group+匿名：成功,,,,,
+zhenghan_acl_test5,zhenghan_acl_test5-acl_test-consumer,udf_default_201=dWRmX2Rl+-/ZmF1bHQ,FALSE,FALSE,TRUE,写：实名：成功匿名：成功读：不带group+实名：成功不带group+匿名：成功带group+实名：成功带group+匿名：成功,,,,,
+zhenghan_acl_test6,zhenghan_acl_test6-acl_test-consumer,udf_default_201=dWRmX2Rl+-/ZmF1bHQ,FALSE,TRUE,TRUE,写：实名：成功匿名：成功读：不带group+实名：成功不带group+匿名：成功带group+实名：成功带group+匿名：成功,,,,,

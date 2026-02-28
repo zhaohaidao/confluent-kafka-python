@@ -14,6 +14,9 @@ import uuid
 DEFAULT_BOOTSTRAP = (
     "10.142.247.201:9093,10.142.247.204:9093,10.142.247.205:9093"
 )
+DEFAULT_ANONYMOUS_BOOTSTRAP = (
+    "10.142.247.201:9092,10.142.247.204:9092,10.142.247.205:9092"
+)
 DEFAULT_CSV = "auth_tests.csv"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -206,6 +209,24 @@ def run_consume(args, case_obj, conf, marker):
                 pass
 
 
+def build_scenario_conf(args, case_obj, use_group, use_auth):
+    scenario_conf = build_base_conf(args)
+    group_id = make_group_id(case_obj, use_group)
+    scenario_conf["group.id"] = group_id
+    scenario_conf["auto.offset.reset"] = "earliest"
+    scenario_conf["enable.auto.commit"] = False
+
+    if use_auth:
+        scenario_conf.update(build_auth_conf(args, case_obj.account_pair))
+    else:
+        if args.anonymous_bootstrap:
+            scenario_conf["bootstrap.servers"] = args.anonymous_bootstrap
+        if args.anonymous_security_protocol:
+            scenario_conf["security.protocol"] = args.anonymous_security_protocol
+
+    return scenario_conf, group_id
+
+
 def format_scenario_result(name, produce_result, consume_result):
     return "%s[p=%s,c=%s]" % (
         name,
@@ -216,21 +237,13 @@ def format_scenario_result(name, produce_result, consume_result):
 
 def run_case(args, case_obj):
     marker = "auth-case-%s-%s" % (case_obj.topic, uuid.uuid4().hex)
-    base = build_base_conf(args)
     all_results = []
     details = {}
 
     for name, use_group, use_auth in SCENARIOS:
-        scenario_conf = dict(base)
-        group_id = make_group_id(case_obj, use_group)
-        scenario_conf["group.id"] = group_id
-        scenario_conf["auto.offset.reset"] = "earliest"
-        scenario_conf["enable.auto.commit"] = False
-
-        if use_auth:
-            scenario_conf.update(build_auth_conf(args, case_obj.account_pair))
-        elif args.anonymous_security_protocol:
-            scenario_conf["security.protocol"] = args.anonymous_security_protocol
+        scenario_conf, group_id = build_scenario_conf(
+            args, case_obj, use_group=use_group, use_auth=use_auth
+        )
 
         produce_conf = dict(scenario_conf)
         produce_conf.pop("group.id", None)
@@ -254,6 +267,8 @@ def run_case(args, case_obj):
         details[name] = {
             "group_id": group_id,
             "authenticated": use_auth,
+            "bootstrap.servers": scenario_conf.get("bootstrap.servers", ""),
+            "security.protocol": scenario_conf.get("security.protocol", ""),
             "produce": dataclasses.asdict(produce_result),
             "consume": dataclasses.asdict(consume_result),
         }
@@ -297,6 +312,11 @@ def parse_args():
         "--security-protocol",
         default="SASL_PLAINTEXT",
         help="security.protocol used by authenticated scenarios",
+    )
+    parser.add_argument(
+        "--anonymous-bootstrap",
+        default=DEFAULT_ANONYMOUS_BOOTSTRAP,
+        help="bootstrap.servers used by anonymous scenarios",
     )
     parser.add_argument(
         "--sasl-mechanisms",

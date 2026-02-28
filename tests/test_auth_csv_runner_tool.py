@@ -55,6 +55,7 @@ def test_run_case_dry_run():
     tool = load_tool_module()
     args = types.SimpleNamespace(
         bootstrap="127.0.0.1:9092",
+        anonymous_bootstrap="127.0.0.1:9092",
         dry_run=True,
         security_protocol="SASL_PLAINTEXT",
         sasl_mechanisms="PLAIN",
@@ -110,3 +111,33 @@ def test_build_jaas_preserves_special_password_chars():
     jaas = tool.build_jaas("udf_default_201", password, "SCRAM-SHA-256")
     assert 'username="udf_default_201"' in jaas
     assert 'password="%s"' % password in jaas
+
+
+def test_build_scenario_conf_uses_anonymous_bootstrap():
+    tool = load_tool_module()
+    args = types.SimpleNamespace(
+        bootstrap="10.0.0.1:9093",
+        anonymous_bootstrap="10.0.0.2:9092",
+        security_protocol="SASL_PLAINTEXT",
+        sasl_mechanisms="SCRAM-SHA-256",
+        anonymous_security_protocol="",
+        socket_timeout_ms=2000,
+    )
+    case_obj = tool.AuthCase(
+        topic="topic_a",
+        group="group_a",
+        account_pair="user_a=pass_a",
+        raw_row={},
+    )
+
+    anonymous_conf, _ = tool.build_scenario_conf(
+        args, case_obj, use_group=False, use_auth=False
+    )
+    assert anonymous_conf["bootstrap.servers"] == "10.0.0.2:9092"
+    assert "security.protocol" not in anonymous_conf
+
+    auth_conf, _ = tool.build_scenario_conf(
+        args, case_obj, use_group=False, use_auth=True
+    )
+    assert auth_conf["bootstrap.servers"] == "10.0.0.1:9093"
+    assert auth_conf["security.protocol"] == "SASL_PLAINTEXT"

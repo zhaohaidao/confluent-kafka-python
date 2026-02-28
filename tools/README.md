@@ -38,3 +38,21 @@ This example only builds for Python 2.7 x64:
     $ CIBW_SKIP="cp3* cp*i686*" tools/cibuildwheel-build.sh wheelhouse
 
 Packages will now be available in wheelhouse/
+
+
+## run_auth_csv_tests.py
+
+Run authentication test cases from `auth_tests.csv` and update the `python SDK` result column.
+
+Example dry run:
+
+    $ python tools/run_auth_csv_tests.py --dry-run
+
+Run against brokers and write results back to the input CSV:
+
+    $ python tools/run_auth_csv_tests.py --in-place \
+        --bootstrap 10.142.247.201:9093,10.142.247.204:9093,10.142.247.205:9093
+
+By default the script writes:
+- `auth_tests.python_automated.csv` for CSV output
+- `.ignore/auth_tests_python_details.json` for execution details

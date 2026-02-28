@@ -134,10 +134,12 @@ def test_build_scenario_conf_uses_anonymous_bootstrap():
         args, case_obj, use_group=False, use_auth=False
     )
     assert anonymous_conf["bootstrap.servers"] == "10.0.0.2:9092"
+    assert anonymous_conf["auto.offset.reset"] == "latest"
     assert "security.protocol" not in anonymous_conf
 
     auth_conf, _ = tool.build_scenario_conf(
         args, case_obj, use_group=False, use_auth=True
     )
     assert auth_conf["bootstrap.servers"] == "10.0.0.1:9093"
+    assert auth_conf["auto.offset.reset"] == "latest"
     assert auth_conf["security.protocol"] == "SASL_PLAINTEXT"

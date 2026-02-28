@@ -179,14 +179,37 @@ def run_produce(args, case_obj, conf, marker):
         return OperationResult(False, short_error(exc))
 
 
-def run_consume(args, case_obj, conf, marker):
+def wait_for_assignment(args, consumer):
+    deadline = time.time() + args.assignment_timeout_sec
+    while time.time() < deadline:
+        msg = consumer.poll(timeout=args.poll_timeout_sec)
+        if msg is not None and msg.error():
+            return OperationResult(False, short_error(msg.error()))
+        if consumer.assignment():
+            return OperationResult(True, "ok")
+    return OperationResult(False, "assignment_timeout")
+
+
+def run_consume(args, case_obj, conf, probe_produce_conf, marker):
     from confluent_kafka import Consumer
 
     consumer = None
-    deadline = time.time() + args.consume_timeout_sec
     try:
         consumer = Consumer(conf)
         consumer.subscribe([case_obj.topic])
+        assignment_result = wait_for_assignment(args, consumer)
+        if not assignment_result.ok:
+            return assignment_result
+
+        probe_produce_result = run_produce(
+            args, case_obj, probe_produce_conf, marker
+        )
+        if not probe_produce_result.ok:
+            return OperationResult(
+                False, "consume_probe_failed:%s" % probe_produce_result.detail
+            )
+
+        deadline = time.time() + args.consume_timeout_sec
         while time.time() < deadline:
             msg = consumer.poll(timeout=args.poll_timeout_sec)
             if msg is None:
@@ -213,7 +236,7 @@ def build_scenario_conf(args, case_obj, use_group, use_auth):
     scenario_conf = build_base_conf(args)
     group_id = make_group_id(case_obj, use_group)
     scenario_conf["group.id"] = group_id
-    scenario_conf["auto.offset.reset"] = "earliest"
+    scenario_conf["auto.offset.reset"] = "latest"
     scenario_conf["enable.auto.commit"] = False
 
     if use_auth:
@@ -257,8 +280,12 @@ def run_case(args, case_obj):
         else:
             produce_result = run_produce(args, case_obj, produce_conf, marker)
             if produce_result.ok:
+                consume_marker = "consume-marker-%s-%s" % (
+                    case_obj.topic,
+                    uuid.uuid4().hex,
+                )
                 consume_result = run_consume(
-                    args, case_obj, scenario_conf, marker
+                    args, case_obj, scenario_conf, produce_conf, consume_marker
                 )
             else:
                 consume_result = OperationResult(False, "skipped_produce_failed")
@@ -357,6 +384,12 @@ def parse_args():
         type=float,
         default=0.5,
         help="Consumer poll timeout seconds",
+    )
+    parser.add_argument(
+        "--assignment-timeout-sec",
+        type=float,
+        default=10.0,
+        help="Max seconds to wait for consumer assignment before probe produce",
     )
     parser.add_argument(
         "--details-json",

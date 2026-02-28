@@ -1,5 +1,6 @@
 import csv
 import importlib.util
+import sys
 import types
 from pathlib import Path
 
@@ -143,3 +144,48 @@ def test_build_scenario_conf_uses_anonymous_bootstrap():
     assert auth_conf["bootstrap.servers"] == "10.0.0.1:9093"
     assert auth_conf["auto.offset.reset"] == "latest"
     assert auth_conf["security.protocol"] == "SASL_PLAINTEXT"
+
+
+def test_run_produce_prefers_client_auth_error(monkeypatch):
+    tool = load_tool_module()
+
+    class FakeProducer:
+        def __init__(self, conf):
+            self._error_cb = conf.get("error_cb")
+
+        def produce(self, topic, value, key, on_delivery):
+            on_delivery(
+                RuntimeError(
+                    'KafkaError{code=_MSG_TIMED_OUT,val=-192,str="Local: Message timed out"}'
+                ),
+                None,
+            )
+            if self._error_cb is not None:
+                self._error_cb(
+                    RuntimeError(
+                        'KafkaError{code=_AUTHENTICATION,val=-169,str="SASL authentication failure"}'
+                    )
+                )
+
+        def poll(self, timeout):
+            return None
+
+        def flush(self, timeout):
+            return 0
+
+    monkeypatch.setitem(
+        sys.modules,
+        "confluent_kafka",
+        types.SimpleNamespace(Producer=FakeProducer),
+    )
+
+    args = types.SimpleNamespace(flush_timeout_sec=1.0)
+    case_obj = tool.AuthCase(
+        topic="topic_a",
+        group="group_a",
+        account_pair="user_a=pass_a",
+        raw_row={},
+    )
+    result = tool.run_produce(args, case_obj, {}, "marker")
+    assert result.ok is False
+    assert "_AUTHENTICATION" in result.detail

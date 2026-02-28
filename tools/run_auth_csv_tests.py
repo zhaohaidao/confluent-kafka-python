@@ -154,14 +154,20 @@ def make_group_id(case_obj, use_group):
 def run_produce(args, case_obj, conf, marker):
     from confluent_kafka import Producer
 
-    state = {"error": None}
+    state = {"error": None, "client_error": None}
 
     def on_delivery(err, _msg):
         if err is not None and state["error"] is None:
             state["error"] = RuntimeError(str(err))
 
+    def on_client_error(err):
+        if err is not None and state["client_error"] is None:
+            state["client_error"] = RuntimeError(str(err))
+
     try:
-        producer = Producer(conf)
+        producer_conf = dict(conf)
+        producer_conf["error_cb"] = on_client_error
+        producer = Producer(producer_conf)
         producer.produce(
             case_obj.topic,
             value=marker.encode("utf-8"),
@@ -170,6 +176,8 @@ def run_produce(args, case_obj, conf, marker):
         )
         producer.poll(0)
         remaining = producer.flush(args.flush_timeout_sec)
+        if state["client_error"] is not None:
+            return OperationResult(False, short_error(state["client_error"]))
         if state["error"] is not None:
             return OperationResult(False, short_error(state["error"]))
         if remaining > 0:

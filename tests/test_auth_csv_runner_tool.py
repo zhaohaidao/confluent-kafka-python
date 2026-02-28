@@ -19,7 +19,7 @@ def test_parse_account_pair():
     tool = load_tool_module()
     username, password = tool.parse_account_pair("user_a=pass_a")
     assert username == "user_a"
-    assert password == "pass_a"
+    assert password == "=pass_a"
 
 
 def test_load_auth_cases_with_gb2312(tmp_path):
@@ -102,3 +102,11 @@ def test_build_jaas_uses_plain_login_module():
     assert "security.plain.PlainLoginModule" in jaas
     assert 'username="u"' in jaas
     assert 'password="p"' in jaas
+
+
+def test_build_jaas_preserves_special_password_chars():
+    tool = load_tool_module()
+    password = '=dWRmX2Rl+-/ZmF1bHQ'
+    jaas = tool.build_jaas("udf_default_201", password, "SCRAM-SHA-256")
+    assert 'username="udf_default_201"' in jaas
+    assert 'password="%s"' % password in jaas

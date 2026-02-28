@@ -90,6 +90,8 @@ def parse_account_pair(account_pair):
         raise ValueError("account username is empty")
     if not password:
         raise ValueError("account password is empty")
+    if not password.startswith("="):
+        password = "=" + password
     return username, password
 
 

@@ -11,6 +11,8 @@ INSTALL_REQUIRES = [
     'requests;python_version<"3.2"'
 ]
 
+PACKAGE_VERSION = os.environ.get('RED_KAFKA_PACKAGE_VERSION', '1.3.0')
+
 AVRO_REQUIRES = [
     'fastavro',
     'requests',
@@ -52,13 +54,14 @@ def get_install_requirements(path):
 
 
 setup(name='red-kafka',
-      version='1.3.0',
+      version=PACKAGE_VERSION,
       description='Red Kafka Python client for Apache Kafka',
       author='Confluent Inc',
       author_email='support@confluent.io',
       url='https://github.com/confluentinc/confluent-kafka-python',
       ext_modules=[module],
       packages=find_packages(exclude=("tests", "tests.*")),
+      exclude_package_data={'': ['__pycache__/*', '*.py[cod]']},
       data_files=[('', ['LICENSE.txt'])],
       python_requires='>=3.10',
       install_requires=INSTALL_REQUIRES,

@@ -56,9 +56,7 @@ pip download --no-cache-dir \
 
 ## 4. Producer 示例
 
-### 4.1 匿名写入示例
-
-匿名访问请使用 `9092` 监听地址。
+当前文档仅保留 `9092` 匿名接入示例。
 
 ```python
 from confluent_kafka import Producer
@@ -92,45 +90,9 @@ producer.produce(
 producer.flush(10)
 ```
 
-### 4.2 实名鉴权写入示例
-
-实名鉴权访问请使用 `9093` 监听地址，并带上 SASL 配置。
-
-```python
-from confluent_kafka import Producer
-
-
-producer = Producer(
-    {
-        "bootstrap.servers": (
-            "10.142.247.201:9093,"
-            "10.142.247.204:9093,"
-            "10.142.247.205:9093"
-        ),
-        "security.protocol": "SASL_PLAINTEXT",
-        "sasl.mechanisms": "SCRAM-SHA-256",
-        "sasl.username": "your_username",
-        "sasl.password": "your_password",
-        "sasl.jaas.config": (
-            "org.apache.kafka.common.security.scram.ScramLoginModule "
-            "required username=\"your_username\" "
-            "password=\"your_password\";"
-        ),
-    }
-)
-
-producer.produce(
-    topic="your_topic",
-    key="demo-key",
-    value="hello from authenticated producer",
-)
-producer.flush(10)
-```
-
-
 ## 5. Consumer 示例
 
-### 5.1 匿名读取示例
+当前文档仅保留 `9092` 匿名接入示例。
 
 ```python
 from confluent_kafka import Consumer
@@ -166,53 +128,6 @@ try:
 finally:
     consumer.close()
 ```
-
-### 5.2 实名鉴权读取示例
-
-```python
-from confluent_kafka import Consumer
-
-
-consumer = Consumer(
-    {
-        "bootstrap.servers": (
-            "10.142.247.201:9093,"
-            "10.142.247.204:9093,"
-            "10.142.247.205:9093"
-        ),
-        "group.id": "demo-auth-consumer-group",
-        "auto.offset.reset": "earliest",
-        "security.protocol": "SASL_PLAINTEXT",
-        "sasl.mechanisms": "SCRAM-SHA-256",
-        "sasl.username": "your_username",
-        "sasl.password": "your_password",
-        "sasl.jaas.config": (
-            "org.apache.kafka.common.security.scram.ScramLoginModule "
-            "required username=\"your_username\" "
-            "password=\"your_password\";"
-        ),
-    }
-)
-
-consumer.subscribe(["your_topic"])
-
-try:
-    while True:
-        msg = consumer.poll(1.0)
-        if msg is None:
-            continue
-        if msg.error():
-            print(f"consume error: {msg.error()}")
-            continue
-        print(
-            f"received key={msg.key()} value={msg.value()} "
-            f"topic={msg.topic()} partition={msg.partition()} offset={msg.offset()}"
-        )
-        break
-finally:
-    consumer.close()
-```
-
 
 ## 6. 最小 Smoke Check
 

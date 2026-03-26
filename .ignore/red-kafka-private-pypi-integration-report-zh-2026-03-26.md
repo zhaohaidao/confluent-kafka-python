@@ -1,21 +1,10 @@
-# Red Kafka 私有 PyPI 接入报告（2026-03-26）
+# Red Kafka Python SDK 接入文档
 
-## 1. 概要
+## 1. Python 版本要求
 
-- 包名：`red-kafka`
-- 推荐版本：`0.1rc6`
-- 包类型：self-contained wheel
-- 目标平台：`cp311-cp311-manylinux_2_28_x86_64`
-- 私有 PyPI 源：`http://pypi.devops.xiaohongshu.com/simple/`
+- 最低要求：Python `3.11`
 
-这版 wheel 已经内置了 `librdkafka` 及其运行时依赖，也内置了 EDS 解析所需的最小客户端逻辑。
-按当前仓库内留存的构建与安装记录整理，目标环境安装后无需再手动设置 `LD_LIBRARY_PATH`，
-也不需要额外安装 `redinfra`。
-
-
-## 2. 包获取方式
-
-### 2.1 通过私有 PyPI 安装
+## 2. 安装方式
 
 ```bash
 pip install --no-cache-dir \
@@ -24,46 +13,7 @@ pip install --no-cache-dir \
   red-kafka==0.1rc6
 ```
 
-### 2.2 只下载 wheel
-
-```bash
-pip download --no-cache-dir \
-  -i http://pypi.devops.xiaohongshu.com/simple/ \
-  --trusted-host pypi.devops.xiaohongshu.com \
-  red-kafka==0.1rc6
-```
-
-### 2.3 当前工作区内的本地制品路径
-
-当前工作区中已验证通过的 self-contained wheel 路径如下：
-
-`/home/admin/mh/kafka/confluent-kafka-python/.ignore/private_pypi_dist_2026-03-26-rc6-fixed/red_kafka-0.1rc6-cp311-cp311-manylinux_2_28_x86_64.whl`
-
-
-## 3. 验证结果
-
-基于当前仓库内留存的构建、上传、安装与实际读写验证记录，本版报告采用如下结果：
-
-1. 从私有 PyPI 安装：`red-kafka==0.1rc6`
-2. 在不设置 `LD_LIBRARY_PATH` 的情况下直接 `import confluent_kafka`
-3. 使用 EDS bootstrap `eds://kafka-eds-paastest` 完成匿名 `9092` 读写闭环
-4. 实际验证 topic：`mcft_topic_p10`
-5. 运行时包版本正确显示为 `0.1rc6`
-
-对应的运行时信息如下：
-
-- `confluent_kafka.version()` -> `('0.1rc6', 65536)`
-- `confluent_kafka.libversion()` -> `('1.1.2-20-g96dc07-dirty', 16777727)`
-
-对应的验证记录文件：
-
-`/home/admin/mh/kafka/confluent-kafka-python/.ignore/red-kafka-eds-doc-validation-2026-03-26.json`
-
-
-## 4. Producer 示例
-
-当前文档仅保留 `9092` 匿名接入示例。
-如果使用 EDS 逻辑地址，需要先准备运行环境变量：
+如果使用 EDS 地址，还需要准备环境变量：
 
 ```bash
 export XHS_ENV=staging
@@ -73,56 +23,30 @@ export XHS_ZONE=qcsh5
 export EDS_HTTP_HOST=10.11.177.52:8085
 ```
 
-下面示例使用仓库内现有的 EDS 逻辑名示例 `eds://kafka-eds-paastest`。
-本报告实际验证使用的 topic 是 `mcft_topic_p10`。
-如果你要接入其他真实集群，需要把 EDS service name 和 topic 一起替换成对应值。
+## 3. 基本读写 Example
 
 ```python
-from confluent_kafka import Producer
+from confluent_kafka import Producer, Consumer
 
 
-def delivery_report(err, msg):
-    if err is not None:
-        print(f"delivery failed: {err}")
-        return
-    print(
-        f"delivered topic={msg.topic()} partition={msg.partition()} offset={msg.offset()}"
-    )
+bootstrap = "eds://kafka-eds-paastest"
+topic = "mcft_topic_p10"
 
 
-producer = Producer(
-    {
-        "bootstrap.servers": "eds://kafka-eds-paastest"
-    }
-)
-
-producer.produce(
-    topic="mcft_topic_p10",
-    key="demo-key",
-    value="hello from anonymous producer",
-    on_delivery=delivery_report,
-)
+producer = Producer({"bootstrap.servers": bootstrap})
+producer.produce(topic=topic, key="demo-key", value="hello from red-kafka")
 producer.flush(10)
-```
-
-## 5. Consumer 示例
-
-当前文档仅保留 `9092` 匿名接入示例。
-如果你要验证一条刚写入的新消息，建议把 `group.id` 改成唯一值。
-
-```python
-from confluent_kafka import Consumer
 
 
 consumer = Consumer(
     {
-        "bootstrap.servers": "eds://kafka-eds-paastest",
+        "bootstrap.servers": bootstrap,
         "group.id": "replace-with-unique-group-id",
         "auto.offset.reset": "earliest",
     }
 )
 
-consumer.subscribe(["mcft_topic_p10"])
+consumer.subscribe([topic])
 
 try:
     while True:
@@ -140,35 +64,3 @@ try:
 finally:
     consumer.close()
 ```
-
-## 6. 最小 Smoke Check
-
-安装完成后，可以运行下面这段脚本做最小验证：
-
-```bash
-python - <<'PY'
-from confluent_kafka import Producer, Consumer, version, libversion
-from confluent_kafka.admin import AdminClient
-
-print("pkg_version=", version())
-print("lib_version=", libversion())
-
-producer = Producer({"bootstrap.servers": "127.0.0.1:1"})
-consumer = Consumer({"bootstrap.servers": "127.0.0.1:1", "group.id": "smoke-check"})
-admin = AdminClient({"bootstrap.servers": "127.0.0.1:1"})
-
-print(type(producer).__name__)
-print(type(consumer).__name__)
-print(type(admin).__name__)
-
-consumer.close()
-PY
-```
-
-
-## 7. 适用范围与限制
-
-- 当前报告覆盖的 wheel 仅适用于 Python `3.11`
-- 当前报告覆盖的 wheel 仅适用于 Linux `x86_64`
-- 当前 wheel 的平台标签为 `manylinux_2_28_x86_64`，目标环境需要 glibc `2.28+`
-- 如果目标环境的 glibc 版本更低，则需要按对应兼容基线重新构建 wheel

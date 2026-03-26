@@ -57,6 +57,18 @@ pip download --no-cache-dir \
 ## 4. Producer 示例
 
 当前文档仅保留 `9092` 匿名接入示例。
+如果使用 EDS 逻辑地址，需要先准备运行环境变量：
+
+```bash
+export XHS_ENV=staging
+export XHS_SERVICE=kafka-service-devtest
+export XHS_REGION=qc-sh
+export XHS_ZONE=qcsh5
+export EDS_HTTP_HOST=10.11.177.52:8085
+```
+
+下面示例使用仓库内现有的 EDS 逻辑名示例 `eds://kafka-eds-paastest`。
+如果你要接入其他真实集群，需要把它替换成对应的 service name。
 
 ```python
 from confluent_kafka import Producer
@@ -73,11 +85,7 @@ def delivery_report(err, msg):
 
 producer = Producer(
     {
-        "bootstrap.servers": (
-            "10.142.247.201:9092,"
-            "10.142.247.204:9092,"
-            "10.142.247.205:9092"
-        )
+        "bootstrap.servers": "eds://kafka-eds-paastest"
     }
 )
 
@@ -100,11 +108,7 @@ from confluent_kafka import Consumer
 
 consumer = Consumer(
     {
-        "bootstrap.servers": (
-            "10.142.247.201:9092,"
-            "10.142.247.204:9092,"
-            "10.142.247.205:9092"
-        ),
+        "bootstrap.servers": "eds://kafka-eds-paastest",
         "group.id": "demo-anonymous-consumer-group",
         "auto.offset.reset": "earliest",
     }

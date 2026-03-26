@@ -1,0 +1,28 @@
+{
+  "pkg_version": [
+    "0.1rc6",
+    65536
+  ],
+  "lib_version": [
+    "1.1.2-20-g96dc07-dirty",
+    16777727
+  ],
+  "bootstrap": "eds://kafka-eds-paastest",
+  "topic": "mcft_topic_p10",
+  "group": "red-kafka-doc-verify-1774515470",
+  "marker": "red-kafka-doc-marker-6b6bb0cb98c74bd09356df9d8970dce1",
+  "warmup_messages": 1,
+  "delivery": {
+    "ok": true,
+    "error": null,
+    "partition": 9,
+    "offset": 8180109143
+  },
+  "consumed": {
+    "topic": "mcft_topic_p10",
+    "partition": 9,
+    "offset": 8180109143,
+    "value": "red-kafka-doc-marker-6b6bb0cb98c74bd09356df9d8970dce1"
+  },
+  "success": true
+}

@@ -19,6 +19,16 @@ class DummyHttpResponse:
         self.text = text
 
 
+class DummyJsonHttpResponse:
+    def __init__(self, status_code, payload):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = ""
+
+    def json(self):
+        return self._payload
+
+
 def _set_env(monkeypatch):
     monkeypatch.setenv("XHS_ENV", "staging")
     monkeypatch.setenv("XHS_SERVICE", "svc")
@@ -91,6 +101,47 @@ def test_resolve_cluster_bootstrap(monkeypatch):
     assert resolved["bootstrap.servers"] == "10.0.0.1:9092,10.0.0.2:9092"
     assert resolved["original.metadata.broker.list"] == "cluster://kafka-main"
     assert "kafka.cluster.name" not in resolved
+
+
+def test_builtin_eds_client_fetches_endpoints(monkeypatch):
+    _set_env(monkeypatch)
+    called = {}
+
+    def _fake_http_get(url, timeout, params=None):
+        called["url"] = url
+        called["timeout"] = timeout
+        called["params"] = params
+        return DummyJsonHttpResponse(
+            200,
+            {
+                "code": 0,
+                "data": {
+                    "version": "v1",
+                    "endpoints": [
+                        {"address": "10.0.0.1:9092"},
+                        {"host": "10.0.0.2", "port": 9092},
+                    ],
+                },
+            },
+        )
+
+    monkeypatch.setattr(red_eds, "_http_get", _fake_http_get)
+
+    client = red_eds._create_eds_client()
+    instances = client.get_instances("kafka-eds-paastest")
+
+    assert called["url"] == "http://10.0.0.1:8085/endpoints"
+    assert called["timeout"] == 5
+    assert called["params"] == {
+        "clientName": "svc",
+        "serviceName": "kafka-eds-paastest",
+        "locality": "qcsh5",
+        "apiVersion": "v1",
+    }
+    assert red_eds._normalize_addresses(instances) == [
+        "10.0.0.1:9092",
+        "10.0.0.2:9092",
+    ]
 
 
 def test_cluster_security_bootstrap_enabled_by_conf(monkeypatch):

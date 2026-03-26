@@ -1,10 +1,7 @@
 import json
 import os
+import threading
 from urllib.parse import quote
-
-
-discovery = None
-_IMPORT_ERROR = None
 
 EDS_BOOTSTRAP_PREFIX = "eds://"
 CLUSTER_BOOTSTRAP_PREFIX = "cluster://"
@@ -45,6 +42,83 @@ class EdsResolveError(RuntimeError):
 
 class KmetaResolveError(RuntimeError):
     pass
+
+
+class _BuiltinEdsClient:
+    def __init__(self, timeout=5):
+        self._eds_http_host = os.getenv("EDS_HTTP_HOST", "").strip()
+        self._client_name = os.getenv("XHS_SERVICE", "").strip()
+        self._locality = os.getenv("XHS_ZONE", "").strip()
+        self._timeout = timeout
+        self._lock = threading.Lock()
+        self._instances_cache = {}
+        self._service_version = {}
+
+    def get_instances(self, service_name):
+        if not service_name:
+            return []
+
+        params = {
+            "clientName": self._client_name,
+            "serviceName": service_name,
+            "locality": self._locality,
+            "apiVersion": "v1",
+        }
+
+        with self._lock:
+            current_version = self._service_version.get(service_name)
+        if current_version:
+            params["version"] = current_version
+
+        response = _http_get(
+            "http://%s/endpoints" % self._eds_http_host,
+            timeout=self._timeout,
+            params=params,
+        )
+        status_code = getattr(response, "status_code", None)
+        if status_code != 200:
+            raise EdsResolveError(
+                "eds request failed (%s) for service: %s"
+                % (status_code, service_name)
+            )
+
+        try:
+            payload = response.json()
+        except Exception as exc:
+            raise EdsResolveError(
+                "eds response decode failed for service %s: %s"
+                % (service_name, exc)
+            )
+
+        if not isinstance(payload, dict):
+            raise EdsResolveError(
+                "eds response format invalid for service: %s" % service_name
+            )
+
+        code = payload.get("code")
+        if code == 1:
+            with self._lock:
+                return list(self._instances_cache.get(service_name, []))
+        if code != 0:
+            raise EdsResolveError(
+                "eds response code %s for service: %s" % (code, service_name)
+            )
+
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise EdsResolveError(
+                "eds response missing data for service: %s" % service_name
+            )
+
+        endpoints = data.get("endpoints") or []
+        version = data.get("version")
+
+        with self._lock:
+            self._instances_cache[service_name] = list(endpoints)
+            if version:
+                self._service_version[service_name] = version
+
+        return list(endpoints)
 
 
 def resolve_bootstrap(conf):
@@ -144,10 +218,10 @@ def _resolve_kmeta_addresses(cluster_name, conf):
     return [item.strip() for item in bootstrap.split(",") if item.strip()]
 
 
-def _http_get(url, timeout):
+def _http_get(url, timeout, params=None):
     import requests
 
-    return requests.get(url, timeout=timeout)
+    return requests.get(url, timeout=timeout, params=params)
 
 
 def _extract_bootstrap_from_kmeta_response(payload):
@@ -346,26 +420,7 @@ def _validate_env():
 
 
 def _create_eds_client():
-    module = _import_redinfra()
-    if module is None:
-        raise EdsResolveError(
-            "redinfra.discovery import failed: %s" % _IMPORT_ERROR
-        )
-    return module.client.EdsClient()
-
-
-def _import_redinfra():
-    global discovery, _IMPORT_ERROR
-    if discovery is not None:
-        return discovery
-    try:
-        from redinfra import discovery as _discovery
-    except Exception as exc:
-        _IMPORT_ERROR = exc
-        return None
-    discovery = _discovery
-    _IMPORT_ERROR = None
-    return discovery
+    return _BuiltinEdsClient()
 
 
 def _normalize_addresses(instances):

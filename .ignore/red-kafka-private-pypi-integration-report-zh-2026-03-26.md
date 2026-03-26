@@ -3,13 +3,14 @@
 ## 1. 概要
 
 - 包名：`red-kafka`
-- 推荐版本：`0.1rc3`
+- 推荐版本：`0.1rc6`
 - 包类型：self-contained wheel
 - 目标平台：`cp311-cp311-manylinux_2_28_x86_64`
 - 私有 PyPI 源：`http://pypi.devops.xiaohongshu.com/simple/`
 
-这版 wheel 已经内置了 `librdkafka` 及其运行时依赖。
-按当前仓库内留存的构建与安装记录整理，目标环境安装后无需再手动设置 `LD_LIBRARY_PATH`。
+这版 wheel 已经内置了 `librdkafka` 及其运行时依赖，也内置了 EDS 解析所需的最小客户端逻辑。
+按当前仓库内留存的构建与安装记录整理，目标环境安装后无需再手动设置 `LD_LIBRARY_PATH`，
+也不需要额外安装 `redinfra`。
 
 
 ## 2. 包获取方式
@@ -20,7 +21,7 @@
 pip install --no-cache-dir \
   -i http://pypi.devops.xiaohongshu.com/simple/ \
   --trusted-host pypi.devops.xiaohongshu.com \
-  red-kafka==0.1rc3
+  red-kafka==0.1rc6
 ```
 
 ### 2.2 只下载 wheel
@@ -29,29 +30,34 @@ pip install --no-cache-dir \
 pip download --no-cache-dir \
   -i http://pypi.devops.xiaohongshu.com/simple/ \
   --trusted-host pypi.devops.xiaohongshu.com \
-  red-kafka==0.1rc3
+  red-kafka==0.1rc6
 ```
 
 ### 2.3 当前工作区内的本地制品路径
 
 当前工作区中已验证通过的 self-contained wheel 路径如下：
 
-`/home/admin/mh/kafka/confluent-kafka-python/.ignore/private_pypi_dist_2026-03-26-rc3-selfcontained/red_kafka-0.1rc3-cp311-cp311-manylinux_2_28_x86_64.whl`
+`/home/admin/mh/kafka/confluent-kafka-python/.ignore/private_pypi_dist_2026-03-26-rc6-fixed/red_kafka-0.1rc6-cp311-cp311-manylinux_2_28_x86_64.whl`
 
 
 ## 3. 验证结果
 
-基于当前仓库内留存的构建、上传与安装记录，本版报告采用如下结果：
+基于当前仓库内留存的构建、上传、安装与实际读写验证记录，本版报告采用如下结果：
 
-1. 从私有 PyPI 安装：`red-kafka==0.1rc3`
+1. 从私有 PyPI 安装：`red-kafka==0.1rc6`
 2. 在不设置 `LD_LIBRARY_PATH` 的情况下直接 `import confluent_kafka`
-3. 成功构造 `Producer`、`Consumer` 和 `AdminClient`
-4. 运行时包版本正确显示为 `0.1rc3`
+3. 使用 EDS bootstrap `eds://kafka-eds-paastest` 完成匿名 `9092` 读写闭环
+4. 实际验证 topic：`mcft_topic_p10`
+5. 运行时包版本正确显示为 `0.1rc6`
 
 对应的运行时信息如下：
 
-- `confluent_kafka.version()` -> `('0.1rc3', 65536)`
+- `confluent_kafka.version()` -> `('0.1rc6', 65536)`
 - `confluent_kafka.libversion()` -> `('1.1.2-20-g96dc07-dirty', 16777727)`
+
+对应的验证记录文件：
+
+`/home/admin/mh/kafka/confluent-kafka-python/.ignore/red-kafka-eds-doc-validation-2026-03-26.json`
 
 
 ## 4. Producer 示例
@@ -68,7 +74,8 @@ export EDS_HTTP_HOST=10.11.177.52:8085
 ```
 
 下面示例使用仓库内现有的 EDS 逻辑名示例 `eds://kafka-eds-paastest`。
-如果你要接入其他真实集群，需要把它替换成对应的 service name。
+本报告实际验证使用的 topic 是 `mcft_topic_p10`。
+如果你要接入其他真实集群，需要把 EDS service name 和 topic 一起替换成对应值。
 
 ```python
 from confluent_kafka import Producer
@@ -90,7 +97,7 @@ producer = Producer(
 )
 
 producer.produce(
-    topic="your_topic",
+    topic="mcft_topic_p10",
     key="demo-key",
     value="hello from anonymous producer",
     on_delivery=delivery_report,
@@ -101,6 +108,7 @@ producer.flush(10)
 ## 5. Consumer 示例
 
 当前文档仅保留 `9092` 匿名接入示例。
+如果你要验证一条刚写入的新消息，建议把 `group.id` 改成唯一值。
 
 ```python
 from confluent_kafka import Consumer
@@ -109,12 +117,12 @@ from confluent_kafka import Consumer
 consumer = Consumer(
     {
         "bootstrap.servers": "eds://kafka-eds-paastest",
-        "group.id": "demo-anonymous-consumer-group",
+        "group.id": "replace-with-unique-group-id",
         "auto.offset.reset": "earliest",
     }
 )
 
-consumer.subscribe(["your_topic"])
+consumer.subscribe(["mcft_topic_p10"])
 
 try:
     while True:

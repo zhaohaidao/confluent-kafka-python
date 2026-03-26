@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import os
+import re
 from setuptools import setup, find_packages
 from distutils.core import Extension
 import platform
@@ -12,6 +13,24 @@ INSTALL_REQUIRES = [
 ]
 
 PACKAGE_VERSION = os.environ.get('RED_KAFKA_PACKAGE_VERSION', '1.3.0')
+
+
+def package_version_hex(version):
+    match = re.match(r'^(\d+)\.(\d+)(?:\.(\d+))?', version)
+    if match is None:
+        raise ValueError('invalid package version: %s' % version)
+
+    major = int(match.group(1))
+    minor = int(match.group(2))
+    patch = int(match.group(3) or 0)
+
+    if major > 255 or minor > 255 or patch > 255:
+        raise ValueError('package version out of range: %s' % version)
+
+    return '0x%02x%02x%02x00' % (major, minor, patch)
+
+
+PACKAGE_VERSION_HEX = package_version_hex(PACKAGE_VERSION)
 
 AVRO_REQUIRES = [
     'fastavro',
@@ -35,6 +54,10 @@ else:
     librdkafka_libname = 'rdkafka'
 
 module = Extension('confluent_kafka.cimpl',
+                   define_macros=[
+                       ('CFL_PY_VERSION_STR', '"%s"' % PACKAGE_VERSION),
+                       ('CFL_PY_VERSION_HEX', PACKAGE_VERSION_HEX),
+                   ],
                    libraries=[librdkafka_libname],
                    sources=['confluent_kafka/src/confluent_kafka.c',
                             'confluent_kafka/src/CProducer.c',

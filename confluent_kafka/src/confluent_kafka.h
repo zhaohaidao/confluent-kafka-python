@@ -57,6 +57,14 @@
 #endif
 #endif
 
+#ifndef CFL_PY_VERSION_STR
+#define CFL_PY_VERSION_STR "1.3.0"
+#endif
+
+#ifndef CFL_PY_VERSION_HEX
+#define CFL_PY_VERSION_HEX 0x01030000
+#endif
+
 
 #if PY_MAJOR_VERSION >= 3
 #define PY3

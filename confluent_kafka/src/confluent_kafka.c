@@ -2259,7 +2259,7 @@ static PyObject *libversion (PyObject *self, PyObject *args) {
  * MM=major, mm=minor, RR=revision, PP=patchlevel (not used)
  */
 static PyObject *version (PyObject *self, PyObject *args) {
-	return Py_BuildValue("si", "1.3.0", 0x01030000);
+	return Py_BuildValue("si", CFL_PY_VERSION_STR, CFL_PY_VERSION_HEX);
 }
 
 static PyMethodDef cimpl_methods[] = {

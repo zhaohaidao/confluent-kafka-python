@@ -12,7 +12,28 @@ INSTALL_REQUIRES = [
     'requests',
 ]
 
-PACKAGE_VERSION = os.environ.get('RED_KAFKA_PACKAGE_VERSION', '1.3.0')
+DEFAULT_PACKAGE_VERSION = '1.3.0'
+
+
+def read_sdist_version():
+    pkg_info_path = os.path.join(os.path.dirname(__file__), 'PKG-INFO')
+
+    if not os.path.exists(pkg_info_path):
+        return None
+
+    with open(pkg_info_path) as pkg_info:
+        for line in pkg_info:
+            if line.startswith('Version: '):
+                return line.split(': ', 1)[1].strip()
+
+    return None
+
+
+PACKAGE_VERSION = (
+    os.environ.get('RED_KAFKA_PACKAGE_VERSION')
+    or read_sdist_version()
+    or DEFAULT_PACKAGE_VERSION
+)
 
 
 def package_version_hex(version):
@@ -86,7 +107,7 @@ setup(name='red-kafka',
       packages=find_packages(exclude=("tests", "tests.*")),
       exclude_package_data={'': ['__pycache__/*', '*.py[cod]']},
       data_files=[('', ['LICENSE.txt'])],
-      python_requires='>=3.10',
+      python_requires='>=3.11',
       install_requires=INSTALL_REQUIRES,
       extras_require={
           'avro': AVRO_REQUIRES,

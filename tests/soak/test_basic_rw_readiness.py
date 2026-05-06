@@ -26,6 +26,9 @@ def test_basic_rw_readiness():
     message_marker = os.environ.get("SOAK_MESSAGE_MARKER", "")
     group = os.environ.get("SOAK_GROUP", "")
     offset_reset = os.environ.get("SOAK_OFFSET_RESET", "latest")
+    default_metrics_env_config = "prod" if client_mode == "r" else ""
+    metrics_env_config = os.environ.get("SOAK_METRICS_ENV_CONFIG", default_metrics_env_config)
+    metrics_collect_url = os.environ.get("SOAK_METRICS_COLLECT_URL", "")
 
     cmd = [
         sys.executable,
@@ -46,6 +49,12 @@ def test_basic_rw_readiness():
 
     if group:
         cmd.extend(["--group", str(group)])
+
+    if client_mode == "r" and metrics_env_config:
+        cmd.extend(["--metrics-env-config", str(metrics_env_config)])
+
+    if client_mode == "r" and metrics_collect_url:
+        cmd.extend(["--metrics-collect-url", str(metrics_collect_url)])
 
     proc = subprocess.run(cmd)
     assert proc.returncode == 0

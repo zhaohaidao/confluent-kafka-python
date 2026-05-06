@@ -20,6 +20,7 @@ SOAK_DURATION_SECONDS=259200 \
 SOAK_RATE=20 \
 SOAK_MAX_NO_PROGRESS_SECONDS=300 \
 SOAK_CHECK_INTERVAL_SECONDS=10 \
+SOAK_METRICS_ENV_CONFIG=prod \
 pytest -q -rs tests/soak/test_basic_rw_readiness.py
 ```
 
@@ -33,6 +34,7 @@ python tests/soak/soakclient.py \
   --client-mode r \
   --message-prefix red-soak \
   --offset-reset latest \
+  --metrics-env-config prod \
   --duration-seconds 259200 \
   --max-no-progress-seconds 300 \
   --health-check-interval-seconds 10 \
@@ -44,6 +46,7 @@ python tests/soak/soakclient.py \
 
 - Pass: process exits with code `0` after reaching the configured duration.
 - Fail: process exits with code `2` if there is no delivery/consume progress within `max-no-progress-seconds`.
+- Note: strict partition offset gap checks are disabled by default for shared topics; enable with `--check-offset-gaps` only on dedicated topics.
 
 ## Background run helper
 
@@ -57,6 +60,7 @@ SOAK_MESSAGE_PREFIX=red-soak \
 SOAK_DURATION_SECONDS=259200 \
 SOAK_MAX_NO_PROGRESS_SECONDS=300 \
 SOAK_DIAGNOSTIC_INTERVAL_SECONDS=300 \
+SOAK_METRICS_ENV_CONFIG=prod \
 ./.ignore/start-soak-readiness-bg.sh
 ```
 

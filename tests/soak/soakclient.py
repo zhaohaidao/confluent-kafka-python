@@ -256,7 +256,7 @@ class SoakClient (object):
                                             self.last_committed))
                     with self.metrics_lock:
                         self.msg_dup_cnt += (hw + 1) - msg.offset()
-                elif msg.offset() > hw + 1:
+                elif self.check_offset_gaps and msg.offset() > hw + 1:
                     self.logger.warning("consumer: Lost messages, now at {} "
                                         "[{}] at offset {} (headers {}): "
                                         "expected offset {}+1 (last committed {})".format(
@@ -342,7 +342,7 @@ class SoakClient (object):
                 raise
 
     def __init__(self, topic, rate, conf, create_topic_timeout_seconds=30, skip_topic_create=False,
-                 client_mode="r", message_prefix="red-soak", message_marker=""):
+                 client_mode="r", message_prefix="red-soak", message_marker="", check_offset_gaps=False):
         """ SoakClient constructor. conf is the client configuration """
         self.topic = topic
         self.rate = rate
@@ -355,6 +355,7 @@ class SoakClient (object):
         self.last_progress_ts = self.start_time
         self.last_metrics = {'delivered': 0, 'consumed': 0}
         self.message_prefix = message_prefix
+        self.check_offset_gaps = check_offset_gaps
         if message_marker:
             self.message_marker = message_marker
         else:
@@ -379,6 +380,7 @@ class SoakClient (object):
         self.logger.addHandler(handler)
         self.logger.info("message prefix: {}".format(self.message_prefix))
         self.logger.info("message marker: {}".format(self.message_marker))
+        self.logger.info("offset gap check: {}".format("enabled" if self.check_offset_gaps else "disabled"))
 
         # Create topic (might already exist)
         if not skip_topic_create:
@@ -556,6 +558,12 @@ if __name__ == '__main__':
                         help='Prefix tag for produced messages')
     parser.add_argument('--message-marker', dest='message_marker', type=str, default='',
                         help='Message marker used for consumer-side filtering (auto-generated if empty)')
+    parser.add_argument('--check-offset-gaps', dest='check_offset_gaps', action='store_true',
+                        help='Enable strict partition offset gap checks (for dedicated topics)')
+    parser.add_argument('--metrics-env-config', dest='metrics_env_config', type=str, default='',
+                        help='env.config passed to RProducer/RConsumer for metrics URL resolution')
+    parser.add_argument('--metrics-collect-url', dest='metrics_collect_url', type=str, default='',
+                        help='metrics.collect.url passed to RProducer/RConsumer (overrides env-config)')
 
     args = parser.parse_args()
 
@@ -589,6 +597,12 @@ if __name__ == '__main__':
     if 'auto.offset.reset' not in conf:
         conf['auto.offset.reset'] = args.offset_reset
 
+    if args.client_mode == "r":
+        if args.metrics_env_config and 'env.config' not in conf:
+            conf['env.config'] = args.metrics_env_config
+        if args.metrics_collect_url and 'metrics.collect.url' not in conf:
+            conf['metrics.collect.url'] = args.metrics_collect_url
+
     # We don't care about partition EOFs
     conf['enable.partition.eof'] = False
 
@@ -598,7 +612,8 @@ if __name__ == '__main__':
                       skip_topic_create=args.skip_topic_create,
                       client_mode=args.client_mode,
                       message_prefix=args.message_prefix,
-                      message_marker=args.message_marker)
+                      message_marker=args.message_marker,
+                      check_offset_gaps=args.check_offset_gaps)
     next_diagnostic_time = time.time() + args.diagnostic_interval_seconds
 
     # Run until interrupted or until duration is reached.

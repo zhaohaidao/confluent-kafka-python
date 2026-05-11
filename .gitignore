@@ -10,6 +10,7 @@ vgcore*
 __pycache__
 *.so
 confluent?kafka.egg-info
+*.egg-info/
 *.pyc
 .cache
 *.log
@@ -22,3 +23,10 @@ dl-*
 .pytest_cache
 staging
 tests/docker/conf/tls/*
+.ignore/*
+auth_tests*.csv
+auth_expectations*.csv
+!auth_tests_verification.example.csv
+!auth_expectations.example.csv
+simple_consumer.py
+simple_producer.py

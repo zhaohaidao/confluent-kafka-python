@@ -320,3 +320,31 @@ def test_consumer_withot_groupid():
     with pytest.raises(ValueError) as ex:
         Consumer({'bootstrap.servers': "mybroker:9092"})
     assert ex.match('group.id must be set')
+
+
+def test_consumer_error_callback_exception_is_propagated():
+    state = {'raised': False}
+
+    def error_cb_that_raises(error):
+        if state['raised']:
+            return
+
+        state['raised'] = True
+        raise RuntimeError("consumer error callback failure")
+
+    consumer = Consumer({
+        'group.id': 'test-consumer-error-callback',
+        'bootstrap.servers': 'nonexistent-broker:9092',
+        'socket.timeout.ms': 100,
+        'session.timeout.ms': 1000,
+        'error_cb': error_cb_that_raises
+    })
+
+    consumer.subscribe(['test-topic'])
+
+    with pytest.raises(RuntimeError) as ex:
+        for _ in range(30):
+            consumer.poll(timeout=0.1)
+
+    assert ex.match('consumer error callback failure')
+    consumer.close()

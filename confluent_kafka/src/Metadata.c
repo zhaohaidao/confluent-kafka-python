@@ -16,6 +16,8 @@
 
 #include "confluent_kafka.h"
 
+#include <stdlib.h>
+
 
 /**
  * @name Cluster and topic metadata retrieval
@@ -393,6 +395,42 @@ list_topics (Handle *self, PyObject *args, PyObject *kwargs) {
         return result;
 }
 
+PyObject *
+stats_collect (Handle *self, PyObject *ignore) {
+        CallState cs;
+        PyObject *result = NULL;
+        char *stats = NULL;
+        size_t len = 0;
+
+        if (!self->rk) {
+                PyErr_SetString(PyExc_RuntimeError, "Client has been closed");
+                return NULL;
+        }
+
+        CallState_begin(self, &cs);
+        stats = curr_stats_collect(self->rk, &len);
+        if (!CallState_end(self, &cs)) {
+                if (stats)
+                        free(stats);
+                return NULL;
+        }
+
+        if (!stats)
+                Py_RETURN_NONE;
+
+        result = cfl_PyUnistr(_FromStringAndSize)(stats, len);
+        free(stats);
+        return result;
+}
+
+PyObject *
+config_dump (Handle *self, PyObject *ignore) {
+        if (!self->config_dump)
+                Py_RETURN_NONE;
+
+        return PyDict_Copy(self->config_dump);
+}
+
 const char list_topics_doc[] = PyDoc_STR(
         ".. py:function:: list_topics([topic=None], [timeout=-1])\n"
         "\n"
@@ -405,3 +443,19 @@ const char list_topics_doc[] = PyDoc_STR(
         " :param float timeout: Maximum response time before timing out, or -1 for infinite timeout.\n"
         " :rtype: ClusterMetadata \n"
         " :raises: KafkaException \n");
+
+const char stats_collect_doc[] = PyDoc_STR(
+        ".. py:function:: stats_collect()\n"
+        "\n"
+        "  Retrieve current librdkafka stats as a JSON string.\n"
+        "\n"
+        "  :returns: stats JSON string or None on failure\n"
+        "  :rtype: str\n");
+
+const char config_dump_doc[] = PyDoc_STR(
+        ".. py:function:: config_dump()\n"
+        "\n"
+        "  Retrieve effective librdkafka configuration as a dict snapshot.\n"
+        "\n"
+        "  :returns: config dict or None on failure\n"
+        "  :rtype: dict\n");

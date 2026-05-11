@@ -1,9 +1,7 @@
 __all__ = ['cimpl', 'admin', 'avro', 'kafkatest']
-from .cimpl import (Consumer,  # noqa
-                    KafkaError,
+from .cimpl import (KafkaError,
                     KafkaException,
                     Message,
-                    Producer,
                     TopicPartition,
                     libversion,
                     version,
@@ -14,6 +12,9 @@ from .cimpl import (Consumer,  # noqa
                     OFFSET_END,
                     OFFSET_STORED,
                     OFFSET_INVALID)
+# Public clients intentionally go through RED wrappers; raw C types remain
+# available from confluent_kafka.cimpl for compatibility and low-level tests.
+from .red import Consumer, Producer, RConsumer, RProducer
 
 __version__ = version()[0]
 

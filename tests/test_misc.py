@@ -198,3 +198,68 @@ def test_topic_config_update():
         if "CI" in os.environ:
             pytest.xfail("Timeout exceeded")
         pytest.fail("Timeout exceeded")
+
+
+def test_stats_cb_exception_is_propagated():
+    state = {'raised': False}
+
+    def stats_cb_that_raises(stats_json_str):
+        json.loads(stats_json_str)
+
+        if state['raised']:
+            return
+
+        state['raised'] = True
+        raise RuntimeError("stats callback failure")
+
+    producer = Producer({
+        'bootstrap.servers': 'localhost:65531',
+        'statistics.interval.ms': 50,
+        'stats_cb': stats_cb_that_raises
+    })
+
+    with pytest.raises(RuntimeError) as ex:
+        deadline = time.time() + 10.0
+        while time.time() < deadline:
+            producer.poll(0.1)
+        pytest.fail("stats callback was not triggered within timeout")
+
+    assert ex.match("stats callback failure")
+
+
+@pytest.mark.skipif(
+    not os.environ.get("TEST_THROTTLE_BOOTSTRAP_SERVERS"),
+    reason="requires TEST_THROTTLE_BOOTSTRAP_SERVERS and broker quotas"
+)
+def test_throttle_cb_exception_is_propagated():
+    state = {'raised': False}
+    bootstrap_servers = os.environ.get("TEST_THROTTLE_BOOTSTRAP_SERVERS")
+    topic = os.environ.get("TEST_THROTTLE_TOPIC", "test-throttle-callback")
+
+    def throttle_cb_that_raises(throttle_event):
+        if state['raised']:
+            return
+
+        state['raised'] = True
+        raise RuntimeError("throttle callback failure")
+
+    producer = Producer({
+        'bootstrap.servers': bootstrap_servers,
+        'client.id': 'throttled_client',
+        'linger.ms': 500,
+        'throttle_cb': throttle_cb_that_raises
+    })
+
+    with pytest.raises(RuntimeError) as ex:
+        deadline = time.time() + 20.0
+        while time.time() < deadline:
+            for _ in range(300):
+                try:
+                    producer.produce(topic, value="x" * 100)
+                except BufferError:
+                    producer.poll(0.1)
+            producer.poll(0.5)
+            producer.flush(0.5)
+        pytest.fail("throttle callback was not triggered within timeout")
+
+    assert ex.match("throttle callback failure")

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include <structmember.h>
 #include <pythread.h>
@@ -54,6 +55,14 @@
 #else
 #error "confluent-kafka-python requires librdkafka v1.0.0 or later. Install the latest version of librdkafka from the Confluent repositories, see http://docs.confluent.io/current/installation.html"
 #endif
+#endif
+
+#ifndef CFL_PY_VERSION_STR
+#define CFL_PY_VERSION_STR "1.3.0"
+#endif
+
+#ifndef CFL_PY_VERSION_HEX
+#define CFL_PY_VERSION_HEX 0x01030000
 #endif
 
 
@@ -207,6 +216,7 @@ typedef struct {
         rd_kafka_type_t type; /* Producer or consumer */
 
         PyObject *logger;
+        PyObject *config_dump;
 
 	union {
 		/**
@@ -242,7 +252,50 @@ int  Handle_traverse (Handle *h, visitproc visit, void *arg);
 typedef struct {
 	PyThreadState *thread_state;
 	int crashed;   /* Callback crashed */
+	/* Preserve the original callback exception while librdkafka unwinds back
+	 * to the public poll/flush/consume call that can raise it. */
+	PyObject *exception_value;   /* Stored callback exception */
 } CallState;
+
+static __inline void
+cfl_exception_fetch (PyObject **exc_value) {
+#if PY_VERSION_HEX >= 0x030c0000
+        *exc_value = PyErr_GetRaisedException();
+#else
+        PyObject *exc_type, *exc_traceback;
+        PyErr_Fetch(&exc_type, exc_value, &exc_traceback);
+        Py_XDECREF(exc_type);
+        Py_XDECREF(exc_traceback);
+#endif
+}
+
+static __inline void
+cfl_exception_restore (PyObject *exc_value) {
+#if PY_VERSION_HEX >= 0x030c0000
+        if (exc_value)
+                PyErr_SetRaisedException(exc_value);
+#else
+        if (exc_value) {
+                PyObject *exc_type = (PyObject *)Py_TYPE(exc_value);
+                Py_INCREF(exc_type);
+                PyErr_Restore(exc_type, exc_value, NULL);
+        }
+#endif
+}
+
+static __inline void
+CallState_fetch_exception (CallState *cs) {
+        cfl_exception_fetch(&cs->exception_value);
+}
+
+static __inline void
+CallState_restore_exception (CallState *cs) {
+        if (!cs->exception_value)
+                return;
+
+        cfl_exception_restore(cs->exception_value);
+        cs->exception_value = NULL;
+}
 
 /**
  * @brief Initialiase a CallState and unlock the GIL prior to a
@@ -345,9 +398,11 @@ rd_kafka_conf_t *common_conf_setup (rd_kafka_type_t ktype,
 PyObject *c_parts_to_py (const rd_kafka_topic_partition_list_t *c_parts);
 rd_kafka_topic_partition_list_t *py_to_c_parts (PyObject *plist);
 PyObject *list_topics (Handle *self, PyObject *args, PyObject *kwargs);
-
-
+PyObject *stats_collect (Handle *self, PyObject *ignore);
+PyObject *config_dump (Handle *self, PyObject *ignore);
 extern const char list_topics_doc[];
+extern const char stats_collect_doc[];
+extern const char config_dump_doc[];
 
 
 #ifdef RD_KAFKA_V_HEADERS
@@ -400,7 +455,7 @@ PyObject *Message_error (Message *self, PyObject *ignore);
  *
  ****************************************************************************/
 
-extern PyTypeObject ProducerType;
+extern PyTypeObject CProducerType;
 
 
 /****************************************************************************
@@ -413,7 +468,7 @@ extern PyTypeObject ProducerType;
  *
  ****************************************************************************/
 
-extern PyTypeObject ConsumerType;
+extern PyTypeObject CConsumerType;
 
 
 /****************************************************************************

@@ -1,0 +1,4 @@
+topic,group,账号密码,topic 鉴权,group 鉴权,是否需要写Group,预期效果,java SDK 效果（新版本）,java SDK 效果（旧版本）,python SDK 效果,C++ SDK 效果（新版本）,C++ SDK 效果（旧版本）
+example_topic_allow_all,example_topic_allow_all-consumer,example_user=example_password,TRUE,TRUE,TRUE,anonymous produce/consume ok; authenticated no-group consume denied; authenticated with-group consume ok,,,,,
+example_topic_deny_anonymous,example_topic_deny_anonymous-consumer,example_user=example_password,TRUE,TRUE,FALSE,anonymous produce denied; authenticated no-group consume denied; authenticated with-group consume ok,,,,,
+example_wrong_credential,example_wrong_credential-consumer,example_user=wrong_password,TRUE,FALSE,TRUE,authenticated produce denied; anonymous consume ok,,,,,

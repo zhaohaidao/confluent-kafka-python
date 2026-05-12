@@ -1,23 +1,21 @@
-# Python SDK Build SOP
+# Python SDK 构建 SOP
 
-This SOP describes how to build, validate, and package the `red-kafka` Python
-SDK from this repository. Commands are intended to run from the repository root.
+本文档说明如何从当前仓库构建、验证和打包 `red-kafka` Python SDK。所有命令默认在仓库根目录执行。
 
-## Scope
+## 适用范围
 
-- Build the local C extension against `librdkafka`.
-- Run the minimum validation before publishing or handing off artifacts.
-- Produce source and wheel artifacts without relying on machine-specific paths.
+- 构建依赖 `librdkafka` 的本地 C 扩展。
+- 在发布或交付构建产物前执行最小验证。
+- 产出源码包和 wheel 包，同时避免依赖特定机器的绝对路径。
 
-## Prerequisites
+## 前置条件
 
-- Python 3.11 or newer.
-- A working C compiler and Python development headers.
-- `pip`, `setuptools`, and `wheel`.
-- `librdkafka` headers and shared library.
+- Python 3.11 或更高版本。
+- 可用的 C 编译器和 Python 开发头文件。
+- `pip`、`setuptools` 和 `wheel`。
+- `librdkafka` 头文件和共享库。
 
-If `librdkafka` is installed in a non-standard prefix, export the prefix through
-an environment variable and derive all paths from it:
+如果 `librdkafka` 安装在非系统默认路径，用环境变量声明安装前缀，并从该前缀派生 include、library 和运行时库路径：
 
 ```bash
 export LIBRDKAFKA_PREFIX=/path/to/librdkafka-prefix
@@ -26,12 +24,11 @@ export LIBRARY_PATH="$LIBRDKAFKA_PREFIX/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
 export LD_LIBRARY_PATH="$LIBRDKAFKA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 ```
 
-On macOS, use `DYLD_LIBRARY_PATH` instead of `LD_LIBRARY_PATH` when a runtime
-loader path is required.
+在 macOS 上，如果需要设置运行时动态库搜索路径，使用 `DYLD_LIBRARY_PATH` 替代 `LD_LIBRARY_PATH`。
 
-## Environment Setup
+## 环境准备
 
-Use an isolated virtual environment:
+使用独立虚拟环境：
 
 ```bash
 python3.11 -m venv "$VENV"
@@ -40,23 +37,19 @@ python -m pip install --upgrade pip setuptools wheel
 python -m pip install -e ".[dev]"
 ```
 
-`$VENV` should be set by the operator, for example to a path under the current
-workspace or another local scratch directory. Do not commit virtualenvs or build
-outputs.
+`$VENV` 由操作者指定，可以放在当前 workspace 下，也可以放在其他本地临时目录中。不要提交虚拟环境或构建输出。
 
-## Local Build
+## 本地构建
 
-Build the extension in place:
+构建本地扩展：
 
 ```bash
 python setup.py build
 ```
 
-If `librdkafka` is not installed in the system default include/library paths,
-keep `C_INCLUDE_PATH`, `LIBRARY_PATH`, and the runtime loader path exported as
-shown above.
+如果 `librdkafka` 不在系统默认 include/library 路径中，保持前面提到的 `C_INCLUDE_PATH`、`LIBRARY_PATH` 和运行时动态库路径已导出。
 
-Verify the built extension can import and reports the linked library version:
+验证构建后的扩展可以正常导入，并确认链接到的库版本：
 
 ```bash
 python - <<'PY'
@@ -67,39 +60,37 @@ print("librdkafka:", confluent_kafka.libversion())
 PY
 ```
 
-## Validation
+## 验证
 
-Run lint and unit tests:
+运行 lint 和单元测试：
 
 ```bash
 python -m flake8
 python -m pytest -q
 ```
 
-If `tox` is installed and the required interpreters are available, run the tox
-matrix:
+如果已安装 `tox`，并且本机具备 `tox.ini` 需要的 Python 解释器，可以运行完整 tox 矩阵：
 
 ```bash
 tox
 ```
 
-For targeted RED runtime changes, run the focused tests first:
+针对 RED runtime 相关改动，优先运行聚焦测试：
 
 ```bash
 python -m pytest -q tests/test_red_eds.py tests/test_red_metrics.py tests/test_public_clients.py
 ```
 
-Integration tests require Docker and a Kafka test configuration. Use the project
-test runner when those dependencies are available:
+集成测试依赖 Docker 和 Kafka 测试配置。依赖就绪时，通过项目测试入口运行：
 
 ```bash
 ./tests/run.sh unit
 ./tests/run.sh all
 ```
 
-## Package Artifacts
+## 打包产物
 
-Set the release version explicitly when producing distributable artifacts:
+打包前显式指定发布版本：
 
 ```bash
 export RED_KAFKA_PACKAGE_VERSION=<version>
@@ -108,17 +99,17 @@ python setup.py sdist bdist_wheel
 python -m pip wheel . --no-deps --wheel-dir wheelhouse
 ```
 
-Expected outputs:
+预期产物：
 
 - `dist/red-kafka-<version>.tar.gz`
 - `dist/red_kafka-<version>-*.whl`
 - `wheelhouse/red_kafka-<version>-*.whl`
 
-Do not commit `build/`, `dist/`, `wheelhouse/`, or `*.egg-info/`.
+不要提交 `build/`、`dist/`、`wheelhouse/` 或 `*.egg-info/`。
 
-## Artifact Smoke Test
+## 产物冒烟验证
 
-Install the wheel into a fresh virtual environment and run an import smoke test:
+在全新的虚拟环境中安装 wheel 并运行导入冒烟测试：
 
 ```bash
 python3.11 -m venv "$SMOKE_VENV"
@@ -138,15 +129,12 @@ Consumer({
 PY
 ```
 
-If the smoke test fails with a dynamic linker error, confirm that the runtime
-loader path points to the same `librdkafka` prefix used during build.
+如果冒烟测试出现动态库加载错误，确认运行时动态库路径指向的 `librdkafka` 前缀，与构建时使用的前缀一致。
 
-## Release Checklist
+## 发布检查清单
 
-- Confirm `RED_KAFKA_PACKAGE_VERSION` matches the intended release version.
-- Confirm `python -m flake8` and relevant `pytest` suites passed.
-- Confirm the wheel smoke test passed in a fresh virtual environment.
-- Confirm generated artifacts are not tracked by Git unless explicitly required
-  by the release process.
-- Record the `librdkafka` version used for the build in the release notes or PR
-  description.
+- 确认 `RED_KAFKA_PACKAGE_VERSION` 是预期发布版本。
+- 确认 `python -m flake8` 和相关 `pytest` 测试已通过。
+- 确认 wheel 在全新虚拟环境中的冒烟测试已通过。
+- 确认生成的构建产物未被 Git 跟踪，除非发布流程明确要求提交。
+- 在 release notes 或 PR 描述中记录本次构建使用的 `librdkafka` 版本。

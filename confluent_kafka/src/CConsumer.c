@@ -1281,6 +1281,12 @@ static PyMethodDef Consumer_methods[] = {
         { "list_topics", (PyCFunction)list_topics, METH_VARARGS|METH_KEYWORDS,
           list_topics_doc
         },
+        { "stats_collect", (PyCFunction)stats_collect, METH_NOARGS,
+          stats_collect_doc
+        },
+        { "config_dump", (PyCFunction)config_dump, METH_NOARGS,
+          config_dump_doc
+        },
 
 	{ NULL }
 };
@@ -1399,9 +1405,9 @@ static PyObject *Consumer_new (PyTypeObject *type, PyObject *args,
 }
 
 
-PyTypeObject ConsumerType = {
+PyTypeObject CConsumerType = {
 	PyVarObject_HEAD_INIT(NULL, 0)
-	"cimpl.Consumer",        /*tp_name*/
+	"cimpl.CConsumer",       /*tp_name*/
 	sizeof(Handle),          /*tp_basicsize*/
 	0,                         /*tp_itemsize*/
 	(destructor)Consumer_dealloc, /*tp_dealloc*/
@@ -1423,7 +1429,7 @@ PyTypeObject ConsumerType = {
 	Py_TPFLAGS_HAVE_GC, /*tp_flags*/
         "A high-level Apache Kafka Consumer\n"
         "\n"
-        ".. py:function:: Consumer(config)\n"
+        ".. py:function:: CConsumer(config)\n"
         "\n"
         "Create a new Consumer instance using the provided configuration *dict* ("
         "including properties and callback functions). "

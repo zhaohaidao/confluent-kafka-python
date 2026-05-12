@@ -56,6 +56,14 @@
 #endif
 #endif
 
+#ifndef CFL_PY_VERSION_STR
+#define CFL_PY_VERSION_STR "1.3.0"
+#endif
+
+#ifndef CFL_PY_VERSION_HEX
+#define CFL_PY_VERSION_HEX 0x01030000
+#endif
+
 
 #if PY_MAJOR_VERSION >= 3
 #define PY3
@@ -207,6 +215,7 @@ typedef struct {
         rd_kafka_type_t type; /* Producer or consumer */
 
         PyObject *logger;
+        PyObject *config_dump;
 
 	union {
 		/**
@@ -345,9 +354,11 @@ rd_kafka_conf_t *common_conf_setup (rd_kafka_type_t ktype,
 PyObject *c_parts_to_py (const rd_kafka_topic_partition_list_t *c_parts);
 rd_kafka_topic_partition_list_t *py_to_c_parts (PyObject *plist);
 PyObject *list_topics (Handle *self, PyObject *args, PyObject *kwargs);
-
-
+PyObject *stats_collect (Handle *self, PyObject *ignore);
+PyObject *config_dump (Handle *self, PyObject *ignore);
 extern const char list_topics_doc[];
+extern const char stats_collect_doc[];
+extern const char config_dump_doc[];
 
 
 #ifdef RD_KAFKA_V_HEADERS
@@ -400,7 +411,7 @@ PyObject *Message_error (Message *self, PyObject *ignore);
  *
  ****************************************************************************/
 
-extern PyTypeObject ProducerType;
+extern PyTypeObject CProducerType;
 
 
 /****************************************************************************
@@ -413,7 +424,7 @@ extern PyTypeObject ProducerType;
  *
  ****************************************************************************/
 
-extern PyTypeObject ConsumerType;
+extern PyTypeObject CConsumerType;
 
 
 /****************************************************************************

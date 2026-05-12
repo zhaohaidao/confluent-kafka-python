@@ -7,6 +7,7 @@ import socket
 import threading
 import time
 import urllib.request
+from urllib.parse import urlsplit, urlunsplit
 
 from . import libversion
 
@@ -403,7 +404,10 @@ class MetricsCollector:
         try:
             dumped = dump_fn()
         except Exception:
-            _LOGGER.exception("config_dump failed")
+            _LOGGER.exception(
+                "config_dump failed, falling back to constructor config: client_type=%s",
+                self._client_type,
+            )
             return self._conf
 
         if isinstance(dumped, dict):
@@ -448,14 +452,15 @@ class MetricsCollector:
         try:
             stats_json = self._client.stats_collect()
         except Exception:
-            _LOGGER.exception("stats_collect failed")
+            _LOGGER.exception("stats_collect failed: client_type=%s", self._client_type)
             return {}
         if not stats_json:
+            _LOGGER.debug("stats_collect returned empty payload: client_type=%s", self._client_type)
             return {}
         try:
             return json.loads(stats_json)
         except Exception:
-            _LOGGER.exception("stats JSON parse failed")
+            _LOGGER.exception("stats JSON parse failed: client_type=%s", self._client_type)
             return {}
 
     def _generate_guid(self):
@@ -473,22 +478,47 @@ class MetricsCollector:
 class MetricsSender:
     def __init__(self, client, conf, client_type, interval=300):
         self._conf = conf or {}
+        self._client_type = client_type
         self._collector = MetricsCollector(client, self._conf, client_type)
         self._interval = max(int(interval), 1)
         self._url = self._resolve_url()
         self._stop_event = threading.Event()
         self._thread = None
+        _LOGGER.debug(
+            "metrics sender initialized: client_type=%s interval=%s url_configured=%s env_config=%s",
+            self._client_type,
+            self._interval,
+            bool(self._url),
+            self._conf.get("env.config", ""),
+        )
 
     def start(self):
         if not self._url:
+            _LOGGER.info(
+                "metrics sender disabled: client_type=%s reason=no_collect_url env=%s env_config=%s",
+                self._client_type,
+                EnvUtil.get_env(),
+                EnvUtil.get_config_env(),
+            )
             return False
         if self._thread:
+            _LOGGER.debug(
+                "metrics sender already running: client_type=%s url=%s",
+                self._client_type,
+                self._safe_url(self._url),
+            )
             return True
         self._stop_event.clear()
         self._thread = threading.Thread(
             target=self._run, name="MetricsSender", daemon=True
         )
         self._thread.start()
+        _LOGGER.info(
+            "metrics sender started: client_type=%s interval=%s url=%s",
+            self._client_type,
+            self._interval,
+            self._safe_url(self._url),
+        )
         return True
 
     def stop(self):
@@ -506,7 +536,11 @@ class MetricsSender:
             try:
                 self._do_task()
             except Exception:
-                _LOGGER.exception("metrics send failed")
+                _LOGGER.exception(
+                    "metrics send task failed: client_type=%s url=%s",
+                    self._client_type,
+                    self._safe_url(self._url),
+                )
 
     def _sleep_interval(self):
         for _ in range(self._interval):
@@ -521,18 +555,37 @@ class MetricsSender:
     def _send_metrics(self, metrics_json):
         payload = metrics_json.encode("utf-8")
         headers = {"Biz-Type": _BIZ_TYPE}
+        original_payload_size = len(payload)
         if len(payload) > 512:
             payload = gzip.compress(payload)
             headers["Content-Encoding"] = "gzip"
 
         url = self._normalize_url(self._url)
+        compressed = "Content-Encoding" in headers
+        _LOGGER.debug(
+            "metrics send attempt: client_type=%s url=%s payload_bytes=%d compressed=%s",
+            self._client_type,
+            self._safe_url(url),
+            original_payload_size,
+            compressed,
+        )
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=5) as resp:
             resp.read()
+            status = getattr(resp, "status", getattr(resp, "code", ""))
+        _LOGGER.debug(
+            "metrics send completed: client_type=%s url=%s status=%s sent_bytes=%d compressed=%s",
+            self._client_type,
+            self._safe_url(url),
+            status,
+            len(payload),
+            compressed,
+        )
 
     def _resolve_url(self):
         url = self._conf.get("metrics.collect.url", "")
         if url:
+            _LOGGER.debug("metrics collect url resolved: source=config")
             return url
 
         config_env = self._conf.get("env.config", "")
@@ -540,10 +593,23 @@ class MetricsSender:
             # EnvUtil mirrors the Java sender's process-wide env selection; the
             # last configured client wins for subsequent metrics senders.
             EnvUtil.set_config_env(config_env)
+            _LOGGER.info("metrics env configured: env_config=%s", config_env)
 
         env_type = EnvUtil.get_env_type()
         if 0 <= env_type < len(_URLS):
-            return _URLS[env_type]
+            url = _URLS[env_type]
+            _LOGGER.debug(
+                "metrics collect url resolved: source=env env=%s env_type=%s url_configured=%s",
+                EnvUtil.get_env(),
+                env_type,
+                bool(url),
+            )
+            return url
+        _LOGGER.info(
+            "metrics collect url unavailable: env=%s env_type=%s",
+            EnvUtil.get_env(),
+            env_type,
+        )
         return ""
 
     def _normalize_url(self, url):
@@ -552,3 +618,10 @@ class MetricsSender:
         if url.startswith("http://") or url.startswith("https://"):
             return url
         return f"http://{url}"
+
+    def _safe_url(self, url):
+        normalized = self._normalize_url(url)
+        if not normalized:
+            return ""
+        parsed = urlsplit(normalized)
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))

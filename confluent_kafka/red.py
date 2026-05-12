@@ -1,9 +1,13 @@
 # Keep the raw C extension types private to this module; package-level
 # Producer/Consumer are replaced with RED wrappers below.
+import logging
+
 from .cimpl import CConsumer as _CConsumer
 from .cimpl import CProducer as _CProducer
 from .red_eds import resolve_bootstrap
 from .red_metrics import MetricsSender
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _build_conf(conf, kwargs):
@@ -23,7 +27,12 @@ class _MetricsClientMixin:
     def _start_metrics(self, conf, client_type):
         self._conf = conf
         self._metrics = MetricsSender(self, conf, client_type, interval=30)
-        self._metrics.start()
+        started = self._metrics.start()
+        _LOGGER.debug(
+            "metrics sender state: client_type=%s started=%s",
+            client_type,
+            started,
+        )
 
     def _stop_metrics(self):
         metrics = getattr(self, "_metrics", None)

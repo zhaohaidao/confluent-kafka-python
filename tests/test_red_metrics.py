@@ -1,4 +1,5 @@
 import json
+import logging
 
 import pytest
 
@@ -11,6 +12,19 @@ class DummyClient:
 
     def stats_collect(self):
         return json.dumps(self._stats)
+
+
+class DummyUrlopenResponse:
+    status = 204
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self):
+        return b""
 
 
 def test_metrics_collector_basic(monkeypatch):
@@ -155,6 +169,58 @@ def test_metrics_collector_fallback_to_conf_on_dump_error(monkeypatch):
     payload = json.loads(collector.get_metrics_json())
     assert payload["enable.partition.eof"] == "false"
     assert payload["statistics.interval.ms"] == "10000"
+
+
+def test_metrics_collector_logs_fallback_to_constructor_config(monkeypatch, caplog):
+    monkeypatch.setattr(red_metrics, "libversion", lambda: ("1.2.3", 0x010203))
+    caplog.set_level(logging.ERROR, logger="confluent_kafka.red_metrics")
+
+    collector = red_metrics.MetricsCollector(
+        DummyClientWithBrokenDump({}),
+        {"statistics.interval.ms": 10000},
+        "Consumer",
+    )
+    payload = json.loads(collector.get_metrics_json())
+
+    assert payload["statistics.interval.ms"] == "10000"
+    assert "config_dump failed, falling back to constructor config" in caplog.text
+    assert "client_type=Consumer" in caplog.text
+
+
+def test_metrics_sender_logs_disabled_when_url_missing(monkeypatch, caplog):
+    monkeypatch.setattr(red_metrics.EnvUtil, "_config_env", "")
+    monkeypatch.setattr(red_metrics.EnvUtil, "_job_env", "")
+    monkeypatch.setattr(red_metrics.EnvUtil, "_xhs_env", "")
+    caplog.set_level(logging.INFO, logger="confluent_kafka.red_metrics")
+
+    sender = red_metrics.MetricsSender(DummyClient({}), {}, "Producer", interval=1)
+
+    assert sender.start() is False
+    assert "metrics sender disabled" in caplog.text
+    assert "reason=no_collect_url" in caplog.text
+
+
+def test_metrics_sender_logs_send_attempt_without_url_query(monkeypatch, caplog):
+    monkeypatch.setattr(red_metrics, "libversion", lambda: ("1.2.3", 0x010203))
+    monkeypatch.setattr(
+        red_metrics.urllib.request,
+        "urlopen",
+        lambda req, timeout: DummyUrlopenResponse(),
+    )
+    caplog.set_level(logging.DEBUG, logger="confluent_kafka.red_metrics")
+
+    sender = red_metrics.MetricsSender(
+        DummyClient({"time": 1700000000}),
+        {"metrics.collect.url": "http://collector.local/api?token=secret-token"},
+        "Producer",
+        interval=1,
+    )
+    sender._do_task()
+
+    assert "metrics send attempt" in caplog.text
+    assert "metrics send completed" in caplog.text
+    assert "http://collector.local/api" in caplog.text
+    assert "secret-token" not in caplog.text
 
 
 def test_cimpl_config_dump_smoke():

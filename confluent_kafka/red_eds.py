@@ -1,7 +1,10 @@
 import json
+import logging
 import os
 import threading
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, urlunsplit
+
+_LOGGER = logging.getLogger(__name__)
 
 EDS_BOOTSTRAP_PREFIX = "eds://"
 CLUSTER_BOOTSTRAP_PREFIX = "cluster://"
@@ -20,6 +23,25 @@ KMETA_CLUSTER_API = "/api/kmeta/cluster/"
 KMETA_SECURITY_BOOTSTRAP_API = "/api/kmeta/cluster/security-bootstrap/"
 KMETA_REQUEST_TIMEOUT_SECONDS = 15
 _REQUIRED_ENV_VARS = ("EDS_HTTP_HOST",)
+_REDACTED_CONFIG_VALUE = "[redacted]"
+_SENSITIVE_CONFIG_KEY_TOKENS = (
+    "password",
+    "jaas.config",
+    "secret",
+    "token",
+)
+_OBSERVABILITY_CONFIG_KEYS = (
+    BOOTSTRAP_SERVERS_CONFIG,
+    SERVICE_NAME_CONFIG,
+    CLUSTER_NAME_CONFIG,
+    ORIGINAL_BOOTSTRAP_CONFIG,
+    SECURITY_PROTOCOL_CONFIG,
+    ENV_CONFIG,
+    "client.id",
+    "group.id",
+    "metrics.collect.url",
+    SASL_JAAS_CONFIG,
+)
 _KMETA_URL_BY_ENV = {
     "PROD_AWSSG": "http://events.int.galapand.com",
     "PROD_AWSSG1": "http://events.int.galapand.com",
@@ -69,6 +91,14 @@ class _BuiltinEdsClient:
         if current_version:
             params["version"] = current_version
 
+        _LOGGER.info(
+            "eds endpoint request: service=%s host=%s client_name_set=%s locality_set=%s version_cached=%s",
+            service_name,
+            self._eds_http_host,
+            bool(self._client_name),
+            bool(self._locality),
+            bool(current_version),
+        )
         response = _http_get(
             "http://%s/endpoints" % self._eds_http_host,
             timeout=self._timeout,
@@ -99,7 +129,13 @@ class _BuiltinEdsClient:
             # EDS uses code=1 to mean "not modified"; reuse the last endpoints
             # for this service when the server answers with only a version hit.
             with self._lock:
-                return list(self._instances_cache.get(service_name, []))
+                cached = list(self._instances_cache.get(service_name, []))
+            _LOGGER.info(
+                "eds endpoint cache reused: service=%s endpoint_count=%d",
+                service_name,
+                len(cached),
+            )
+            return cached
         if code != 0:
             raise EdsResolveError(
                 "eds response code %s for service: %s" % (code, service_name)
@@ -119,6 +155,12 @@ class _BuiltinEdsClient:
             if version:
                 self._service_version[service_name] = version
 
+        _LOGGER.info(
+            "eds endpoint response accepted: service=%s endpoint_count=%d version_set=%s",
+            service_name,
+            len(endpoints),
+            bool(version),
+        )
         return list(endpoints)
 
 
@@ -133,17 +175,55 @@ def resolve_bootstrap(conf):
 
     route = _select_bootstrap_source(conf)
     if route is None:
+        _LOGGER.debug(
+            "bootstrap resolution skipped: config=%s",
+            _config_snapshot(conf),
+        )
         return conf
 
     route_type, logical_name, original_bootstrap = route
-    if route_type == "eds":
-        resolved_logical_name = _resolve_eds_service_name(logical_name, conf)
-        addresses = _resolve_eds_addresses(resolved_logical_name)
-    else:
-        resolved_logical_name = logical_name
-        addresses = _resolve_kmeta_addresses(logical_name, conf)
+    security_enabled, security_reason, security_protocol = _security_state(conf)
+    _LOGGER.info(
+        "bootstrap resolution started: route=%s logical=%s original=%s "
+        "security_enabled=%s security_reason=%s security_protocol=%s config=%s",
+        route_type,
+        logical_name,
+        original_bootstrap,
+        security_enabled,
+        security_reason,
+        security_protocol,
+        _config_snapshot(conf),
+    )
+
+    try:
+        if route_type == "eds":
+            resolved_logical_name = _resolve_eds_service_name(logical_name, conf)
+            addresses = _resolve_eds_addresses(resolved_logical_name)
+        else:
+            resolved_logical_name = logical_name
+            addresses = _resolve_kmeta_addresses(logical_name, conf)
+    except Exception:
+        _LOGGER.exception(
+            "bootstrap resolution failed: route=%s logical=%s original=%s security_enabled=%s security_reason=%s",
+            route_type,
+            logical_name,
+            original_bootstrap,
+            security_enabled,
+            security_reason,
+        )
+        raise
 
     if not addresses:
+        _LOGGER.error(
+            "bootstrap resolution returned no addresses: route=%s logical=%s "
+            "resolved_logical=%s original=%s security_enabled=%s security_reason=%s",
+            route_type,
+            logical_name,
+            resolved_logical_name,
+            original_bootstrap,
+            security_enabled,
+            security_reason,
+        )
         if route_type == "eds":
             raise EdsResolveError(
                 "eds lookup returned no instances for service: %s"
@@ -161,6 +241,17 @@ def resolve_bootstrap(conf):
     # only physical broker addresses.
     resolved[ORIGINAL_BOOTSTRAP_CONFIG] = original_bootstrap
     resolved[BOOTSTRAP_SERVERS_CONFIG] = ",".join(_unique_preserve_order(addresses))
+    _LOGGER.info(
+        "bootstrap resolution completed: route=%s logical=%s resolved_logical=%s "
+        "original=%s address_count=%d security_enabled=%s security_reason=%s",
+        route_type,
+        logical_name,
+        resolved_logical_name,
+        original_bootstrap,
+        len(_unique_preserve_order(addresses)),
+        security_enabled,
+        security_reason,
+    )
     return resolved
 
 
@@ -192,20 +283,35 @@ def _select_bootstrap_source(conf):
 
 def _resolve_eds_addresses(service_name):
     _validate_env()
+    _LOGGER.info("eds bootstrap lookup started: service=%s", service_name)
     client = _create_eds_client()
     instances = client.get_instances(service_name)
-    return _normalize_addresses(instances)
+    addresses = _normalize_addresses(instances)
+    _LOGGER.info(
+        "eds bootstrap lookup completed: service=%s address_count=%d",
+        service_name,
+        len(addresses),
+    )
+    return addresses
 
 
 def _resolve_kmeta_addresses(cluster_name, conf):
     kmeta_url = _resolve_kmeta_url(conf)
-    security_enabled = _security_enabled(conf)
+    security_enabled, security_reason, security_protocol = _security_state(conf)
     # KMeta exposes a different bootstrap endpoint for SASL-enabled clusters;
     # JAAS can come either from client config or the Java-compatible env var.
     api_path = (
         KMETA_SECURITY_BOOTSTRAP_API if security_enabled else KMETA_CLUSTER_API
     )
     url = _join_url(kmeta_url, api_path + quote(cluster_name, safe=""))
+    _LOGGER.info(
+        "kmeta bootstrap request: cluster=%s endpoint=%s security_enabled=%s security_reason=%s security_protocol=%s",
+        cluster_name,
+        api_path,
+        security_enabled,
+        security_reason,
+        security_protocol,
+    )
 
     response = _http_get(url, timeout=KMETA_REQUEST_TIMEOUT_SECONDS)
     status_code = getattr(response, "status_code", None)
@@ -223,7 +329,14 @@ def _resolve_kmeta_addresses(cluster_name, conf):
             "kmeta response missing bootstrap for cluster: %s" % cluster_name
         )
 
-    return [item.strip() for item in bootstrap.split(",") if item.strip()]
+    addresses = [item.strip() for item in bootstrap.split(",") if item.strip()]
+    _LOGGER.info(
+        "kmeta bootstrap response accepted: cluster=%s address_count=%d security_enabled=%s",
+        cluster_name,
+        len(addresses),
+        security_enabled,
+    )
+    return addresses
 
 
 def _http_get(url, timeout, params=None):
@@ -264,14 +377,20 @@ def _extract_bootstrap_from_kmeta_response(payload):
 
 
 def _security_enabled(conf):
+    return _security_state(conf)[0]
+
+
+def _security_state(conf):
     protocol = _resolve_security_protocol(conf)
     if protocol in ("SASL_PLAINTEXT", "SASL_SSL"):
-        return True
+        return True, SECURITY_PROTOCOL_CONFIG, protocol
 
     jaas_config = conf.get(SASL_JAAS_CONFIG)
     if jaas_config is not None and str(jaas_config).strip():
-        return True
-    return bool(os.getenv(SASL_JAAS_CONFIG_ENV, "").strip())
+        return True, SASL_JAAS_CONFIG, protocol
+    if os.getenv(SASL_JAAS_CONFIG_ENV, "").strip():
+        return True, SASL_JAAS_CONFIG_ENV, protocol
+    return False, "none", protocol
 
 
 def _resolve_security_protocol(conf):
@@ -296,17 +415,27 @@ def _resolve_eds_service_name(service_name, conf):
 def _resolve_kmeta_url(conf):
     kmeta_url = os.getenv(KMETA_URL_ENV, "").strip()
     if kmeta_url:
+        _LOGGER.info("kmeta url resolved: source=%s", KMETA_URL_ENV)
         return kmeta_url
 
     env_name = _resolve_kmeta_env(conf)
     if not env_name:
+        _LOGGER.error(
+            "kmeta env missing: config=%s job_env_set=%s xhs_env_set=%s kmeta_url_set=%s",
+            _config_snapshot(conf),
+            bool(os.getenv("JOB_ENV", "").strip()),
+            bool(os.getenv("XHS_ENV", "").strip()),
+            bool(os.getenv(KMETA_URL_ENV, "").strip()),
+        )
         raise KmetaResolveError(
             "missing kmeta env, set env.config/JOB_ENV/XHS_ENV or KMETA_URL"
         )
 
     kmeta_url = _KMETA_URL_BY_ENV.get(env_name)
     if not kmeta_url:
+        _LOGGER.error("kmeta env unsupported: env=%s", env_name)
         raise KmetaResolveError("unsupported kmeta env: %s" % env_name)
+    _LOGGER.info("kmeta url resolved: source=env env=%s", env_name)
     return kmeta_url
 
 
@@ -458,6 +587,7 @@ def _strip_cluster_prefix(value):
 def _validate_env():
     missing = [key for key in _REQUIRED_ENV_VARS if not os.getenv(key)]
     if missing:
+        _LOGGER.error("eds env missing: vars=%s", ",".join(missing))
         raise EdsResolveError(
             "missing eds environment variables: %s" % ",".join(missing)
         )
@@ -507,3 +637,42 @@ def _format_host_port(host, port):
     if not host or port is None:
         return ""
     return "%s:%s" % (host, port)
+
+
+def _config_snapshot(conf):
+    snapshot = {}
+    for key in _OBSERVABILITY_CONFIG_KEYS:
+        if key not in conf:
+            continue
+        value = conf.get(key)
+        if value is None or value == "":
+            continue
+        snapshot[key] = _safe_config_value(key, value)
+    return snapshot
+
+
+def _safe_config_value(key, value):
+    if _is_sensitive_config_key(key):
+        return _REDACTED_CONFIG_VALUE
+    if key == "metrics.collect.url":
+        return _safe_url_value(value)
+    if isinstance(value, (list, tuple)):
+        return ",".join(str(item) for item in value)
+    return str(value)
+
+
+def _is_sensitive_config_key(key):
+    normalized = str(key).lower().replace("_", ".")
+    if any(token in normalized for token in _SENSITIVE_CONFIG_KEY_TOKENS):
+        return True
+    return normalized.endswith(".key") or ".key." in normalized
+
+
+def _safe_url_value(value):
+    url = str(value)
+    parsed = urlsplit(url)
+    if not parsed.scheme and not parsed.netloc:
+        parsed = urlsplit("http://%s" % url)
+        safe = urlunsplit(("", parsed.netloc, parsed.path, "", ""))
+        return safe or str(value).split("?", 1)[0].split("#", 1)[0]
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))

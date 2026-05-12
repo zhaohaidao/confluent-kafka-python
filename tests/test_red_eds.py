@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 from confluent_kafka import red_eds
@@ -114,6 +116,31 @@ def test_resolve_eds_appends_sasl_suffix_when_jaas_config_is_set(monkeypatch):
     assert resolved["original.metadata.broker.list"] == "eds://kafka-eds-paastest"
 
 
+def test_resolve_eds_logs_route_and_redacts_sensitive_config(monkeypatch, caplog):
+    _set_env(monkeypatch)
+    client = DummyEdsClient(["10.1.1.1:9093"])
+    monkeypatch.setattr(red_eds, "_create_eds_client", lambda: client)
+    caplog.set_level(logging.INFO, logger="confluent_kafka.red_eds")
+
+    conf = {
+        "bootstrap.servers": "eds://kafka-eds-paastest",
+        "security.protocol": "SASL_PLAINTEXT",
+        "sasl.jaas.config": 'login required password="secret-pass";',
+        "group.id": "group-a",
+        "metrics.collect.url": "http://collector.local/api?token=route-token",
+    }
+    resolved = red_eds.resolve_eds_bootstrap(conf)
+
+    assert resolved["bootstrap.servers"] == "10.1.1.1:9093"
+    assert "bootstrap resolution started" in caplog.text
+    assert "bootstrap resolution completed" in caplog.text
+    assert "security_enabled=True" in caplog.text
+    assert "address_count=1" in caplog.text
+    assert red_eds._REDACTED_CONFIG_VALUE in caplog.text
+    assert "secret-pass" not in caplog.text
+    assert "route-token" not in caplog.text
+
+
 def test_resolve_eds_does_not_duplicate_sasl_suffix(monkeypatch):
     _set_env(monkeypatch)
     client = DummyEdsClient(["10.1.1.1:9093"])
@@ -140,6 +167,20 @@ def test_resolve_eds_missing_eds_http_host(monkeypatch):
     conf = {"bootstrap.servers": "eds://kafka-eds-paastest"}
     with pytest.raises(red_eds.EdsResolveError):
         red_eds.resolve_eds_bootstrap(conf)
+
+
+def test_resolve_eds_logs_failure_context(monkeypatch, caplog):
+    for key in red_eds._REQUIRED_ENV_VARS:
+        monkeypatch.delenv(key, raising=False)
+    caplog.set_level(logging.INFO, logger="confluent_kafka.red_eds")
+
+    conf = {"bootstrap.servers": "eds://kafka-eds-paastest"}
+    with pytest.raises(red_eds.EdsResolveError):
+        red_eds.resolve_eds_bootstrap(conf)
+
+    assert "bootstrap resolution failed" in caplog.text
+    assert "eds env missing" in caplog.text
+    assert "kafka-eds-paastest" in caplog.text
 
 
 def test_resolve_eds_requires_only_eds_http_host(monkeypatch):
@@ -183,6 +224,28 @@ def test_resolve_cluster_bootstrap(monkeypatch):
     assert resolved["bootstrap.servers"] == "10.0.0.2:9092,10.0.0.1:9092"
     assert resolved["original.metadata.broker.list"] == "cluster://kafka-main"
     assert "kafka.cluster.name" not in resolved
+
+
+def test_resolve_cluster_logs_security_endpoint_decision(monkeypatch, caplog):
+    monkeypatch.setenv("JOB_ENV", "staging")
+    caplog.set_level(logging.INFO, logger="confluent_kafka.red_eds")
+
+    def _fake_http_get(url, timeout):
+        return DummyHttpResponse(200, "10.0.0.2:9093")
+
+    monkeypatch.setattr(red_eds, "_http_get", _fake_http_get)
+
+    conf = {
+        "kafka.cluster.name": "kafka-main",
+        "sasl.jaas.config": "login required password=secret;",
+    }
+    resolved = red_eds.resolve_bootstrap(conf)
+
+    assert resolved["bootstrap.servers"] == "10.0.0.2:9093"
+    assert "kmeta bootstrap request" in caplog.text
+    assert red_eds.KMETA_SECURITY_BOOTSTRAP_API in caplog.text
+    assert "security_reason=sasl.jaas.config" in caplog.text
+    assert "password=secret" not in caplog.text
 
 
 def test_builtin_eds_client_fetches_endpoints(monkeypatch):

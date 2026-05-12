@@ -60,6 +60,45 @@ print("librdkafka:", confluent_kafka.libversion())
 PY
 ```
 
+## `librdkafka` 版本口径
+
+发布构建必须显式声明 Python SDK 依赖的 `librdkafka` 动态库版本。不要把脚本默认值当作发布版本口径。
+
+当前仓库 CI 中的默认版本来自 `.travis.yml` 的 `LIBRDKAFKA_VERSION`，当前值为：
+
+```bash
+LIBRDKAFKA_VERSION=v1.3.0
+```
+
+发布 wheel 时推荐使用固定 tag：
+
+```bash
+export LIBRDKAFKA_VERSION=v1.3.0
+tools/cibuildwheel-build.sh wheelhouse "$LIBRDKAFKA_VERSION"
+```
+
+如果必须基于内部 patch 过的 `librdkafka` 源码构建，使用 `RDKAFKA_SOURCE_DIR` 指向源码目录，并在 PR 或 release notes 中记录源码仓库、commit id 和 commit message：
+
+```bash
+export RDKAFKA_SOURCE_DIR=/path/to/librdkafka-source
+tools/cibuildwheel-build.sh wheelhouse
+```
+
+版本描述建议使用以下格式：
+
+```text
+Python SDK wheels bundle dynamic librdkafka built from <source>, version/tag <tag-or-version>.
+For patched builds, librdkafka source commit is <commit-id> (<commit-message>).
+The Python extension links dynamically to librdkafka; source installs require a compatible librdkafka to be available on the build host.
+```
+
+示例：
+
+```text
+Python SDK wheels bundle dynamic librdkafka built from upstream tag v1.3.0.
+The Python extension links dynamically to librdkafka; source installs require a compatible librdkafka to be available on the build host.
+```
+
 ## 验证
 
 运行 lint 和单元测试：
@@ -134,6 +173,7 @@ PY
 ## 发布检查清单
 
 - 确认 `RED_KAFKA_PACKAGE_VERSION` 是预期发布版本。
+- 确认发布构建使用的 `LIBRDKAFKA_VERSION` 或 `RDKAFKA_SOURCE_DIR` 已记录；如果使用 patch 过的源码，记录源码 commit id 和 commit message。
 - 确认 `python -m flake8` 和相关 `pytest` 测试已通过。
 - 确认 wheel 在全新虚拟环境中的冒烟测试已通过。
 - 确认生成的构建产物未被 Git 跟踪，除非发布流程明确要求提交。

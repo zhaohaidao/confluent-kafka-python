@@ -15,7 +15,6 @@ ORIGINAL_BOOTSTRAP_CONFIG = "original.metadata.broker.list"
 SECURITY_PROTOCOL_CONFIG = "security.protocol"
 SECURITY_PROTOCOL_ENV = "kafka_security_protocol"
 SASL_JAAS_CONFIG = "sasl.jaas.config"
-SASL_JAAS_CONFIG_ENV = "kafka_sasl_jaas_config"
 EDS_SECURITY_SERVICE_NAME_SUFFIX = "sasl"
 ENV_CONFIG = "env.config"
 KMETA_URL_ENV = "KMETA_URL"
@@ -298,8 +297,7 @@ def _resolve_eds_addresses(service_name):
 def _resolve_kmeta_addresses(cluster_name, conf):
     kmeta_url = _resolve_kmeta_url(conf)
     security_enabled, security_reason, security_protocol = _security_state(conf)
-    # KMeta exposes a different bootstrap endpoint for SASL-enabled clusters;
-    # JAAS can come either from client config or the Java-compatible env var.
+    # KMeta exposes a different bootstrap endpoint for SASL-enabled clusters.
     api_path = (
         KMETA_SECURITY_BOOTSTRAP_API if security_enabled else KMETA_CLUSTER_API
     )

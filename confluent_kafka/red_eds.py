@@ -16,7 +16,7 @@ SECURITY_PROTOCOL_CONFIG = "security.protocol"
 SECURITY_PROTOCOL_ENV = "kafka_security_protocol"
 SASL_JAAS_CONFIG = "sasl.jaas.config"
 SASL_JAAS_CONFIG_ENV = "kafka_sasl_jaas_config"
-EDS_SECURITY_SERVICE_NAME_SUFFIX = "SASL"
+EDS_SECURITY_SERVICE_NAME_SUFFIX = "sasl"
 ENV_CONFIG = "env.config"
 KMETA_URL_ENV = "KMETA_URL"
 KMETA_CLUSTER_API = "/api/kmeta/cluster/"
@@ -385,18 +385,11 @@ def _security_state(conf):
     if protocol in ("SASL_PLAINTEXT", "SASL_SSL"):
         return True, SECURITY_PROTOCOL_CONFIG, protocol
 
-    jaas_config = conf.get(SASL_JAAS_CONFIG)
-    if jaas_config is not None and str(jaas_config).strip():
-        return True, SASL_JAAS_CONFIG, protocol
-    if os.getenv(SASL_JAAS_CONFIG_ENV, "").strip():
-        return True, SASL_JAAS_CONFIG_ENV, protocol
     return False, "none", protocol
 
 
 def _resolve_security_protocol(conf):
     protocol = conf.get(SECURITY_PROTOCOL_CONFIG)
-    if protocol is None:
-        protocol = os.getenv(SECURITY_PROTOCOL_ENV, "")
     if isinstance(protocol, str):
         return protocol.strip().upper()
     return ""
@@ -407,8 +400,8 @@ def _resolve_eds_service_name(service_name, conf):
         return service_name
     if not _security_enabled(conf):
         return service_name
-    if service_name.upper().endswith(EDS_SECURITY_SERVICE_NAME_SUFFIX):
-        return service_name
+    if service_name.lower().endswith(EDS_SECURITY_SERVICE_NAME_SUFFIX):
+        return service_name[: -len(EDS_SECURITY_SERVICE_NAME_SUFFIX)] + EDS_SECURITY_SERVICE_NAME_SUFFIX
     return service_name + EDS_SECURITY_SERVICE_NAME_SUFFIX
 
 

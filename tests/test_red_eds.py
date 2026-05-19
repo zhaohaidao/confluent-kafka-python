@@ -81,28 +81,28 @@ def test_resolve_eds_appends_sasl_suffix_when_security_protocol_is_set(monkeypat
     }
     resolved = red_eds.resolve_eds_bootstrap(conf)
 
-    assert client.calls == ["kafka-eds-paastestSASL"]
+    assert client.calls == ["kafka-eds-paastestsasl"]
     assert resolved["bootstrap.servers"] == "10.1.1.1:9093"
     assert resolved["original.metadata.broker.list"] == "eds://kafka-eds-paastest"
 
 
-def test_resolve_eds_appends_sasl_suffix_when_security_protocol_env_is_set(monkeypatch):
+def test_resolve_eds_ignores_security_protocol_env(monkeypatch):
     _set_env(monkeypatch)
     monkeypatch.setenv("kafka_security_protocol", "SASL_SSL")
-    client = DummyEdsClient(["10.1.1.1:9093"])
+    client = DummyEdsClient(["10.1.1.1:9092"])
     monkeypatch.setattr(red_eds, "_create_eds_client", lambda: client)
 
     conf = {"bootstrap.servers": "eds://kafka-eds-paastest"}
     resolved = red_eds.resolve_eds_bootstrap(conf)
 
-    assert client.calls == ["kafka-eds-paastestSASL"]
-    assert resolved["bootstrap.servers"] == "10.1.1.1:9093"
+    assert client.calls == ["kafka-eds-paastest"]
+    assert resolved["bootstrap.servers"] == "10.1.1.1:9092"
     assert resolved["original.metadata.broker.list"] == "eds://kafka-eds-paastest"
 
 
-def test_resolve_eds_appends_sasl_suffix_when_jaas_config_is_set(monkeypatch):
+def test_resolve_eds_ignores_jaas_config_without_sasl_security_protocol(monkeypatch):
     _set_env(monkeypatch)
-    client = DummyEdsClient(["10.1.1.1:9093"])
+    client = DummyEdsClient(["10.1.1.1:9092"])
     monkeypatch.setattr(red_eds, "_create_eds_client", lambda: client)
 
     conf = {
@@ -111,8 +111,8 @@ def test_resolve_eds_appends_sasl_suffix_when_jaas_config_is_set(monkeypatch):
     }
     resolved = red_eds.resolve_eds_bootstrap(conf)
 
-    assert client.calls == ["kafka-eds-paastestSASL"]
-    assert resolved["bootstrap.servers"] == "10.1.1.1:9093"
+    assert client.calls == ["kafka-eds-paastest"]
+    assert resolved["bootstrap.servers"] == "10.1.1.1:9092"
     assert resolved["original.metadata.broker.list"] == "eds://kafka-eds-paastest"
 
 
@@ -152,7 +152,7 @@ def test_resolve_eds_does_not_duplicate_sasl_suffix(monkeypatch):
     }
     resolved = red_eds.resolve_eds_bootstrap(conf)
 
-    assert client.calls == ["kafka-eds-paastestSASL"]
+    assert client.calls == ["kafka-eds-paastestsasl"]
     assert resolved["bootstrap.servers"] == "10.1.1.1:9093"
     assert (
         resolved["original.metadata.broker.list"]
@@ -237,6 +237,7 @@ def test_resolve_cluster_logs_security_endpoint_decision(monkeypatch, caplog):
 
     conf = {
         "kafka.cluster.name": "kafka-main",
+        "security.protocol": "SASL_PLAINTEXT",
         "sasl.jaas.config": "login required password=secret;",
     }
     resolved = red_eds.resolve_bootstrap(conf)
@@ -244,7 +245,7 @@ def test_resolve_cluster_logs_security_endpoint_decision(monkeypatch, caplog):
     assert resolved["bootstrap.servers"] == "10.0.0.2:9093"
     assert "kmeta bootstrap request" in caplog.text
     assert red_eds.KMETA_SECURITY_BOOTSTRAP_API in caplog.text
-    assert "security_reason=sasl.jaas.config" in caplog.text
+    assert "security_reason=security.protocol" in caplog.text
     assert "password=secret" not in caplog.text
 
 
@@ -334,6 +335,7 @@ def test_cluster_security_bootstrap_enabled_by_conf(monkeypatch):
 
     conf = {
         "bootstrap.servers": "cluster://kafka-auth",
+        "security.protocol": "SASL_PLAINTEXT",
         "sasl.jaas.config": (
             "org.apache.kafka.common.security.plain.PlainLoginModule "
             'required username="u" password="p";'
@@ -350,7 +352,7 @@ def test_cluster_security_bootstrap_enabled_by_conf(monkeypatch):
     assert resolved["original.metadata.broker.list"] == "cluster://kafka-auth"
 
 
-def test_cluster_security_bootstrap_enabled_by_env(monkeypatch):
+def test_cluster_security_bootstrap_ignores_jaas_env(monkeypatch):
     monkeypatch.setenv("XHS_ENV", "sit")
     monkeypatch.setenv("kafka_sasl_jaas_config", "env-jaas")
     called = {}
@@ -367,7 +369,7 @@ def test_cluster_security_bootstrap_enabled_by_env(monkeypatch):
 
     assert (
         called["url"]
-        == "http://events.int.sit.xiaohongshu.com/api/kmeta/cluster/security-bootstrap/kafka-auth-by-env"
+        == "http://events.int.sit.xiaohongshu.com/api/kmeta/cluster/kafka-auth-by-env"
     )
     assert called["timeout"] == red_eds.KMETA_REQUEST_TIMEOUT_SECONDS
     assert resolved["bootstrap.servers"] == "10.2.2.2:9093"

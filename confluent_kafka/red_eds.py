@@ -353,25 +353,53 @@ def _extract_bootstrap_from_kmeta_response(payload):
     try:
         data = json.loads(payload)
     except Exception:
-        return payload
+        return _normalize_kmeta_bootstrap(payload)
 
     if isinstance(data, str):
-        return data.strip()
+        return _normalize_kmeta_bootstrap(data)
 
     if isinstance(data, dict):
         bootstrap = data.get("bootstrapStr")
-        if isinstance(bootstrap, str) and bootstrap.strip():
-            return bootstrap.strip()
+        if isinstance(bootstrap, str):
+            bootstrap = _normalize_kmeta_bootstrap(bootstrap)
+            if bootstrap:
+                return bootstrap
 
         nested = data.get("data")
-        if isinstance(nested, str) and nested.strip():
-            return nested.strip()
+        if isinstance(nested, str):
+            nested = _normalize_kmeta_bootstrap(nested)
+            if nested:
+                return nested
         if isinstance(nested, dict):
             nested_bootstrap = nested.get("bootstrapStr") or nested.get("bootstrap")
-            if isinstance(nested_bootstrap, str) and nested_bootstrap.strip():
-                return nested_bootstrap.strip()
+            if isinstance(nested_bootstrap, str):
+                nested_bootstrap = _normalize_kmeta_bootstrap(nested_bootstrap)
+                if nested_bootstrap:
+                    return nested_bootstrap
 
-    return payload
+    return ""
+
+
+def _normalize_kmeta_bootstrap(value):
+    if not isinstance(value, str):
+        return ""
+
+    addresses = [item.strip() for item in value.split(",") if item.strip()]
+    if not addresses:
+        return ""
+    if not all(_is_bootstrap_address(address) for address in addresses):
+        return ""
+    return ",".join(addresses)
+
+
+def _is_bootstrap_address(value):
+    host, separator, port = value.rpartition(":")
+    if not separator:
+        return False
+    if not host.strip() or not port.isdigit():
+        return False
+    port_number = int(port)
+    return 1024 <= port_number <= 65535
 
 
 def _security_enabled(conf):

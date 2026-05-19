@@ -375,6 +375,35 @@ def test_cluster_security_bootstrap_ignores_jaas_env(monkeypatch):
     assert resolved["bootstrap.servers"] == "10.2.2.2:9093"
 
 
+def test_cluster_bootstrap_rejects_plain_error_payload(monkeypatch):
+    monkeypatch.setenv("JOB_ENV", "staging")
+
+    def _fake_http_get(url, timeout):
+        return DummyHttpResponse(200, "error:404")
+
+    monkeypatch.setattr(red_eds, "_http_get", _fake_http_get)
+
+    conf = {"kafka.cluster.name": "missing-cluster"}
+    with pytest.raises(red_eds.KmetaResolveError):
+        red_eds.resolve_bootstrap(conf)
+
+
+def test_cluster_bootstrap_rejects_json_error_payload(monkeypatch):
+    monkeypatch.setenv("JOB_ENV", "staging")
+
+    def _fake_http_get(url, timeout):
+        return DummyHttpResponse(
+            200,
+            '{"code":1,"msg":"cluster not found","data":"error: cluster not found"}',
+        )
+
+    monkeypatch.setattr(red_eds, "_http_get", _fake_http_get)
+
+    conf = {"kafka.cluster.name": "missing-cluster"}
+    with pytest.raises(red_eds.KmetaResolveError):
+        red_eds.resolve_bootstrap(conf)
+
+
 def test_cluster_name_empty():
     conf = {"bootstrap.servers": "cluster://"}
     with pytest.raises(red_eds.KmetaResolveError):

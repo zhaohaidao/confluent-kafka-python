@@ -1,161 +1,224 @@
-# Python SDK 构建 SOP
+# Python SDK 构建与发布 SOP
 
-本文档说明如何从当前仓库构建、验证和打包 `red-kafka` Python SDK。所有命令默认在仓库根目录执行。
+本文档说明如何构建、验证并发布 `red-kafka` Python SDK。所有命令默认在仓库根目录执行。
 
 ## 适用范围
 
-- 构建依赖 `librdkafka` 的本地 C 扩展。
-- 在发布或交付构建产物前执行最小验证。
-- 产出源码包和 wheel 包，同时避免依赖特定机器的绝对路径。
+- 本地开发时构建依赖 `librdkafka` 的 C 扩展。
+- 在 CI 或发布环境中构建 manylinux wheel 和 sdist。
+- 发布到内部 PyPI，并从远端重新安装验证。
 
-## 前置条件
+本文档不覆盖真实 Kafka 集群集成测试。集成测试需要单独准备 broker 集群和 `testconf.json`。
 
-- Python 3.11 或更高版本。
-- 可用的 C 编译器和 Python 开发头文件。
-- `pip`、`setuptools` 和 `wheel`。
-- `librdkafka` 头文件和共享库。
+## 产物口径
 
-如果 `librdkafka` 安装在非系统默认路径，用环境变量声明安装前缀，并从该前缀派生 include、library 和运行时库路径：
-
-```bash
-export LIBRDKAFKA_PREFIX=/path/to/librdkafka-prefix
-export C_INCLUDE_PATH="$LIBRDKAFKA_PREFIX/include${C_INCLUDE_PATH:+:$C_INCLUDE_PATH}"
-export LIBRARY_PATH="$LIBRDKAFKA_PREFIX/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
-export LD_LIBRARY_PATH="$LIBRDKAFKA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-```
-
-在 macOS 上，如果需要设置运行时动态库搜索路径，使用 `DYLD_LIBRARY_PATH` 替代 `LD_LIBRARY_PATH`。
-
-## 环境准备
-
-使用独立虚拟环境：
-
-```bash
-python3.11 -m venv "$VENV"
-. "$VENV/bin/activate"
-python -m pip install --upgrade pip setuptools wheel
-python -m pip install -e ".[dev]"
-```
-
-`$VENV` 由操作者指定，可以放在当前 workspace 下，也可以放在其他本地临时目录中。不要提交虚拟环境或构建输出。
-
-## 本地构建
-
-构建本地扩展：
-
-```bash
-python setup.py build
-```
-
-如果 `librdkafka` 不在系统默认 include/library 路径中，保持前面提到的 `C_INCLUDE_PATH`、`LIBRARY_PATH` 和运行时动态库路径已导出。
-
-验证构建后的扩展可以正常导入，并确认链接到的库版本：
-
-```bash
-python - <<'PY'
-import confluent_kafka
-
-print("python package:", confluent_kafka.version())
-print("librdkafka:", confluent_kafka.libversion())
-PY
-```
-
-## `librdkafka` 版本口径
-
-发布构建必须显式声明 Python SDK 依赖的 `librdkafka` 动态库版本。不要把脚本默认值当作发布版本口径。
-
-当前仓库 CI 中的默认版本来自 `.travis.yml` 的 `LIBRDKAFKA_VERSION`，当前值为：
-
-```bash
-LIBRDKAFKA_VERSION=v1.3.0
-```
-
-发布 wheel 时推荐使用固定 tag：
-
-```bash
-export LIBRDKAFKA_VERSION=v1.3.0
-tools/cibuildwheel-build.sh wheelhouse "$LIBRDKAFKA_VERSION"
-```
-
-如果必须基于内部 patch 过的 `librdkafka` 源码构建，使用 `RDKAFKA_SOURCE_DIR` 指向源码目录，并在 PR 或 release notes 中记录源码仓库、commit id 和 commit message：
-
-```bash
-export RDKAFKA_SOURCE_DIR=/path/to/librdkafka-source
-tools/cibuildwheel-build.sh wheelhouse
-```
-
-版本描述建议使用以下格式：
+Python SDK 对外交付的是 PyPI 包：
 
 ```text
-Python SDK wheels bundle dynamic librdkafka built from <source>, version/tag <tag-or-version>.
-For patched builds, librdkafka source commit is <commit-id> (<commit-message>).
-The Python extension links dynamically to librdkafka; source installs require a compatible librdkafka to be available on the build host.
+red-kafka==<version>
+```
+
+发布时必须同时记录：
+
+- Python SDK 源码 commit。
+- `RED_KAFKA_PACKAGE_VERSION`。
+- 构建 wheel 使用的 `librdkafka` 镜像 tag 或源码 commit。
+- 上传后的内部 PyPI index。
+
+内部 PyPI 安装命令：
+
+```bash
+python -m pip install --pre \
+  -i http://pypi.devops.xiaohongshu.com/simple \
+  --trusted-host pypi.devops.xiaohongshu.com \
+  "red-kafka==<version>"
+```
+
+## 发布前检查
+
+先确认工作区和目标版本：
+
+```bash
+git status --short --branch
+git log -1 --oneline
+
+export RED_KAFKA_PACKAGE_VERSION=<version>
+export LIBRDKAFKA_IMAGE=<image-containing-librdkafka>
 ```
 
 示例：
 
-```text
-Python SDK wheels bundle dynamic librdkafka built from upstream tag v1.3.0.
-The Python extension links dynamically to librdkafka; source installs require a compatible librdkafka to be available on the build host.
+```bash
+export RED_KAFKA_PACKAGE_VERSION=0.1rc17
+export LIBRDKAFKA_IMAGE=docker-reg.devops.xiaohongshu.com/media/red-kafka-python-librdkafka:c46df5a
 ```
 
-## 验证
+`LIBRDKAFKA_IMAGE` 必须包含：
 
-运行 lint 和单元测试：
+- `/opt/librdkafka/include/librdkafka/rdkafka.h`
+- `/opt/librdkafka/lib/librdkafka.so`
+- `/opt/python/cp311-cp311/bin/python`
+- `/opt/python/cp312-cp312/bin/python`
+- `auditwheel`
+
+检查镜像：
 
 ```bash
-python -m flake8
-python -m pytest -q
+docker run --rm "$LIBRDKAFKA_IMAGE" bash -lc '
+set -e
+ls -l /opt/librdkafka/include/librdkafka/rdkafka.h
+ls -l /opt/librdkafka/lib/librdkafka.so
+ls -l /opt/python/cp311-cp311/bin/python /opt/python/cp312-cp312/bin/python
+auditwheel --version
+'
 ```
 
-如果已安装 `tox`，并且本机具备 `tox.ini` 需要的 Python 解释器，可以运行完整 tox 矩阵：
+确认目标版本尚未发布：
 
 ```bash
-tox
+python - <<'PY'
+import os
+import re
+import urllib.request
+
+version = os.environ["RED_KAFKA_PACKAGE_VERSION"]
+with urllib.request.urlopen(
+    "http://pypi.devops.xiaohongshu.com/simple/red-kafka/",
+    timeout=10,
+) as response:
+    html = response.read().decode()
+exists = bool(re.search(r"red_kafka-%s[.-]" % re.escape(version), html))
+print("version:", version)
+print("exists:", exists)
+raise SystemExit(1 if exists else 0)
+PY
 ```
 
-针对 RED runtime 相关改动，优先运行聚焦测试：
+## 单元测试
+
+优先在同一个 `librdkafka` 镜像中运行核心单测，避免宿主机缺 `libssl.so.10` 或 `librdkafka.so`：
 
 ```bash
-python -m pytest -q tests/test_red_eds.py tests/test_red_metrics.py tests/test_public_clients.py
+# ci/run-core-unit-tests-in-librdkafka-image.sh 读取 IMAGE_TAG；这里显式映射到发布用的 LIBRDKAFKA_IMAGE。
+IMAGE_TAG="$LIBRDKAFKA_IMAGE" \
+RED_KAFKA_PACKAGE_VERSION="$RED_KAFKA_PACKAGE_VERSION" \
+./ci/run-core-unit-tests-in-librdkafka-image.sh \
+  tests/test_red_eds.py \
+  tests/test_red_metrics.py \
+  tests/test_public_clients.py \
+  tests/test_auth_csv_runner_tool.py \
+  tests/test_Producer.py \
+  tests/test_Consumer.py \
+  tests/test_Admin.py \
+  tests/test_misc.py
 ```
 
-集成测试依赖 Docker 和 Kafka 测试配置。依赖就绪时，通过项目测试入口运行：
+只改 EDS 路由时，至少运行：
 
 ```bash
-./tests/run.sh unit
-./tests/run.sh all
+# ci/run-core-unit-tests-in-librdkafka-image.sh 读取 IMAGE_TAG；这里显式映射到发布用的 LIBRDKAFKA_IMAGE。
+IMAGE_TAG="$LIBRDKAFKA_IMAGE" \
+RED_KAFKA_PACKAGE_VERSION="$RED_KAFKA_PACKAGE_VERSION" \
+./ci/run-core-unit-tests-in-librdkafka-image.sh tests/test_red_eds.py
 ```
 
-## 打包产物
-
-打包前显式指定发布版本：
+如果本机已经有匹配的动态库，也可以直接运行：
 
 ```bash
-export RED_KAFKA_PACKAGE_VERSION=<version>
+export LD_LIBRARY_PATH=<librdkafka-prefix>/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+python -m pytest -q tests/test_red_eds.py
+```
+
+宿主机缺动态库时，不要把 import 失败误判为代码回归；切回容器验证。
+
+## 构建发布产物
+
+清理旧产物：
+
+```bash
 rm -rf build dist wheelhouse red_kafka.egg-info
-python setup.py sdist bdist_wheel
-python -m pip wheel . --no-deps --wheel-dir wheelhouse
+mkdir -p dist wheelhouse
+```
+
+在 `LIBRDKAFKA_IMAGE` 中构建 cp311/cp312 wheel，并用 `auditwheel` 修复成 manylinux wheel：
+
+```bash
+docker run --rm \
+  -e "RED_KAFKA_PACKAGE_VERSION=$RED_KAFKA_PACKAGE_VERSION" \
+  -v "$PWD:/io" \
+  -w /io \
+  "$LIBRDKAFKA_IMAGE" \
+  bash -lc '
+set -euo pipefail
+export CFLAGS="-I/opt/librdkafka/include"
+export LDFLAGS="-L/opt/librdkafka/lib"
+export LD_LIBRARY_PATH="/opt/librdkafka/lib:${LD_LIBRARY_PATH:-}"
+
+for py in /opt/python/cp311-cp311/bin/python /opt/python/cp312-cp312/bin/python; do
+  rm -rf build red_kafka.egg-info /tmp/red-kafka-wheel
+  mkdir -p /tmp/red-kafka-wheel
+  "$py" -m pip wheel . --no-deps -w /tmp/red-kafka-wheel
+  # wheelhouse resolves to /io/wheelhouse under -w /io, i.e. $PWD/wheelhouse on the host.
+  auditwheel repair /tmp/red-kafka-wheel/red_kafka-*.whl -w wheelhouse
+done
+
+rm -rf build red_kafka.egg-info
+/opt/python/cp311-cp311/bin/python setup.py sdist -d dist
+'
 ```
 
 预期产物：
 
-- `dist/red-kafka-<version>.tar.gz`
-- `dist/red_kafka-<version>-*.whl`
-- `wheelhouse/red_kafka-<version>-*.whl`
+```text
+dist/red_kafka-<version>.tar.gz
+wheelhouse/red_kafka-<version>-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+wheelhouse/red_kafka-<version>-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+```
+
+计算 hash：
+
+```bash
+sha256sum dist/* wheelhouse/*
+```
 
 不要提交 `build/`、`dist/`、`wheelhouse/` 或 `*.egg-info/`。
 
-## 产物冒烟验证
+## 本地产物验证
 
-在全新的虚拟环境中安装 wheel 并运行导入冒烟测试：
+先检查包元数据：
 
 ```bash
-python3.11 -m venv "$SMOKE_VENV"
-. "$SMOKE_VENV/bin/activate"
-python -m pip install --upgrade pip
-python -m pip install dist/red_kafka-<version>-*.whl
-python - <<'PY'
+python -m pip install twine
+python -m twine check dist/* wheelhouse/*
+```
+
+`long_description` warning 是当前仓库既有 metadata 问题；只要 `twine check` 返回 0，可以继续发布。
+
+再从 wheel 文件做 cp311/cp312 干净安装冒烟。注意不要在仓库目录执行 Python，否则当前源码目录会盖过已安装 wheel：
+
+```bash
+docker run --rm \
+  -e "RED_KAFKA_PACKAGE_VERSION=$RED_KAFKA_PACKAGE_VERSION" \
+  -v "$PWD:/io" \
+  "$LIBRDKAFKA_IMAGE" \
+  bash -lc '
+set -euo pipefail
+cd /tmp
+
+smoke_one() {
+  local spec="$1"
+  local py="/opt/python/${spec}/bin/python"
+  venv=/tmp/smoke-$spec
+  rm -rf "$venv"
+  "$py" -m venv "$venv"
+  . "$venv/bin/activate"
+  wheel="$(ls /io/wheelhouse/red_kafka-${RED_KAFKA_PACKAGE_VERSION}-${spec}-manylinux*.whl)"
+  # "$wheel" is a local file; the index is only used to resolve Python dependencies such as requests.
+  python -m pip install \
+    -i http://pypi.devops.xiaohongshu.com/simple \
+    --trusted-host pypi.devops.xiaohongshu.com \
+    "$wheel"
+  python - <<'"'"'PY'"'"'
 from confluent_kafka import Consumer, Producer, libversion, version
 
 print("python package:", version())
@@ -166,15 +229,158 @@ Consumer({
     "group.id": "smoke-test",
 }).close()
 PY
+  deactivate
+}
+
+smoke_one cp311-cp311
+smoke_one cp312-cp312
+'
 ```
 
-如果冒烟测试出现动态库加载错误，确认运行时动态库路径指向的 `librdkafka` 前缀，与构建时使用的前缀一致。
+期望 `version()` 输出包含 `RED_KAFKA_PACKAGE_VERSION`，`libversion()` 输出构建镜像中的 `librdkafka` 版本。
 
-## 发布检查清单
+## 上传到内部 PyPI
 
-- 确认 `RED_KAFKA_PACKAGE_VERSION` 是预期发布版本。
-- 确认发布构建使用的 `LIBRDKAFKA_VERSION` 或 `RDKAFKA_SOURCE_DIR` 已记录；如果使用 patch 过的源码，记录源码 commit id 和 commit message。
-- 确认 `python -m flake8` 和相关 `pytest` 测试已通过。
-- 确认 wheel 在全新虚拟环境中的冒烟测试已通过。
-- 确认生成的构建产物未被 Git 跟踪，除非发布流程明确要求提交。
-- 在 release notes 或 PR 描述中记录本次构建使用的 `librdkafka` 版本。
+上传前确认 `~/.pypirc` 中存在内部仓库条目，例如：
+
+```text
+[red]
+repository = http://pypi.devops.xiaohongshu.com
+```
+
+不要把用户名、密码或 token 写入本文档。
+
+上传：
+
+```bash
+python -m pip install twine
+python -m twine upload -r red dist/* wheelhouse/*
+```
+
+## 远端安装验证
+
+上传成功后，从内部 PyPI 重新安装，确认不是只验证了本地文件：
+
+```bash
+docker run --rm \
+  -e "RED_KAFKA_PACKAGE_VERSION=$RED_KAFKA_PACKAGE_VERSION" \
+  "$LIBRDKAFKA_IMAGE" \
+  bash -lc '
+set -euo pipefail
+cd /tmp
+for spec in cp311-cp311 cp312-cp312; do
+  py=/opt/python/$spec/bin/python
+  venv=/tmp/remote-$spec
+  rm -rf "$venv"
+  "$py" -m venv "$venv"
+  . "$venv/bin/activate"
+  python -m pip install --pre \
+    -i http://pypi.devops.xiaohongshu.com/simple \
+    --trusted-host pypi.devops.xiaohongshu.com \
+    "red-kafka==${RED_KAFKA_PACKAGE_VERSION}"
+  python - <<'"'"'PY'"'"'
+from confluent_kafka import libversion, version
+
+print("python package:", version())
+print("librdkafka:", libversion())
+PY
+  deactivate
+done
+'
+```
+
+再检查 simple index 中的文件名和 hash：
+
+```bash
+python - <<'PY'
+import os
+import re
+import urllib.request
+
+version = os.environ["RED_KAFKA_PACKAGE_VERSION"]
+with urllib.request.urlopen(
+    "http://pypi.devops.xiaohongshu.com/simple/red-kafka/",
+    timeout=10,
+) as response:
+    html = response.read().decode()
+for name in sorted(set(re.findall(r"red_kafka-%s[^\"<>]*" % re.escape(version), html))):
+    print(name)
+PY
+```
+
+## 本地开发构建
+
+本地只做开发验证时，可以不走 manylinux 镜像。先准备虚拟环境：
+
+```bash
+export VENV="$PWD/.venv-dev"
+python3.11 -m venv "$VENV"
+. "$VENV/bin/activate"
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -e ".[dev]"
+```
+
+如果 `librdkafka` 安装在非系统默认路径，用安装前缀派生 include、library 和运行时库路径：
+
+```bash
+export LIBRDKAFKA_PREFIX=/path/to/librdkafka-prefix
+export C_INCLUDE_PATH="$LIBRDKAFKA_PREFIX/include${C_INCLUDE_PATH:+:$C_INCLUDE_PATH}"
+export LIBRARY_PATH="$LIBRDKAFKA_PREFIX/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+export LD_LIBRARY_PATH="$LIBRDKAFKA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+```
+
+构建并检查导入：
+
+```bash
+python setup.py build
+python - <<'PY'
+import confluent_kafka
+
+print("python package:", confluent_kafka.version())
+print("librdkafka:", confluent_kafka.libversion())
+PY
+```
+
+在 macOS 上，如果需要设置运行时动态库搜索路径，使用 `DYLD_LIBRARY_PATH` 替代 `LD_LIBRARY_PATH`。
+
+## 发布记录模板
+
+发布完成后记录以下信息：
+
+从构建镜像读取 `librdkafka` commit：
+
+```bash
+docker run --rm "$LIBRDKAFKA_IMAGE" bash -lc 'echo "${LIBRDKAFKA_COMMIT:?LIBRDKAFKA_COMMIT not set in image}"'
+```
+
+如果该命令失败，说明镜像没有记录 `librdkafka` commit；必须从镜像构建日志或镜像发布记录补证，不能留空。
+
+```text
+Python package: red-kafka==<version>
+Python source commit: <commit-id> (<commit-message>)
+librdkafka image: <image>
+librdkafka source commit: <commit-id> (<commit-message>)
+Artifacts:
+- red_kafka-<version>-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl sha256=<sha256>
+- red_kafka-<version>-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl sha256=<sha256>
+- red_kafka-<version>.tar.gz sha256=<sha256>
+Validation:
+- core unit tests: <command and result>
+- twine check: <result>
+- local wheel smoke: cp311/cp312 <result>
+- remote PyPI install: cp311/cp312 <result>
+```
+
+## 常见问题
+
+### 宿主机 import 失败
+
+如果报 `librdkafka.so: cannot open shared object file` 或 `libssl.so.10: cannot open shared object file`，优先用 `LIBRDKAFKA_IMAGE` 运行测试。不要在宿主机临时拼系统库后直接发布。
+
+### wheel 冒烟误用了源码目录
+
+在仓库根目录执行 Python 时，`/io/confluent_kafka` 可能覆盖虚拟环境中的 wheel 包，导致 `No module named 'confluent_kafka.cimpl'`。冒烟测试必须先 `cd /tmp`。
+
+### 发布版本已存在
+
+内部 PyPI 通常不允许覆盖同名文件。若 `RED_KAFKA_PACKAGE_VERSION` 已存在，递增到下一个 rc 版本并重新构建全部产物。

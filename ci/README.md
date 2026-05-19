@@ -49,6 +49,15 @@ IMAGE_TAG=red-kafka-python-librdkafka:280be6f \
 ci/run-core-unit-tests-in-librdkafka-image.sh
 ```
 
+To verify a release-candidate package version, pass
+`RED_KAFKA_PACKAGE_VERSION` through the runner:
+
+```bash
+RED_KAFKA_PACKAGE_VERSION=0.1rc15 \
+IMAGE_TAG=red-kafka-python-librdkafka:280be6f \
+ci/run-core-unit-tests-in-librdkafka-image.sh
+```
+
 The default test set is the fast core suite:
 
 ```text

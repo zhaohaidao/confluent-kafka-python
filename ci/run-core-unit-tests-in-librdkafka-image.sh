@@ -9,6 +9,7 @@ RUN_FLAKE8="${RUN_FLAKE8:-0}"
 INSTALL_DEV_EXTRAS="${INSTALL_DEV_EXTRAS:-0}"
 PIP_INDEX_URL="${PIP_INDEX_URL:-http://mirrors.tencentyun.com/pypi/simple}"
 PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST:-mirrors.tencentyun.com}"
+RED_KAFKA_PACKAGE_VERSION="${RED_KAFKA_PACKAGE_VERSION:-}"
 
 if [[ "$#" -gt 0 ]]; then
     PYTEST_TARGETS="$*"
@@ -21,6 +22,7 @@ docker run --rm \
     -e "INSTALL_DEV_EXTRAS=${INSTALL_DEV_EXTRAS}" \
     -e "PIP_INDEX_URL=${PIP_INDEX_URL}" \
     -e "PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}" \
+    -e "RED_KAFKA_PACKAGE_VERSION=${RED_KAFKA_PACKAGE_VERSION}" \
     -e "PYTEST_TARGETS=${PYTEST_TARGETS}" \
     -v "${REPO_ROOT}:/workspace" \
     -w /workspace \

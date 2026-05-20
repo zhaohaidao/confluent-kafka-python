@@ -8,6 +8,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOL_PATH = REPO_ROOT / "tools" / "run_auth_csv_tests.py"
 JAVA_TOOL_PATH = REPO_ROOT / "tools" / "run_auth_csv_tests_java.py"
+CHECK_TOOL_PATH = REPO_ROOT / "tools" / "check_auth_csv_results.py"
 
 
 def load_tool_module():
@@ -19,6 +20,13 @@ def load_tool_module():
 
 def load_java_tool_module():
     spec = importlib.util.spec_from_file_location("auth_csv_runner_java_tool", JAVA_TOOL_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_check_tool_module():
+    spec = importlib.util.spec_from_file_location("auth_csv_result_check_tool", CHECK_TOOL_PATH)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -219,3 +227,51 @@ def test_run_produce_prefers_client_auth_error(monkeypatch):
     result = tool.run_produce(args, case_obj, {}, "marker")
     assert result.ok is False
     assert "_AUTHENTICATION" in result.detail
+
+
+def test_check_auth_csv_results_passes_expected_matrix():
+    tool = load_check_tool_module()
+    row = {
+        "topic": "topic_a",
+        tool.FIELD_EXPECTED: (
+            "写：实名：成功匿名：失败"
+            "读：不带group+实名：失败不带group+匿名：失败"
+            "带group+实名：成功带group+匿名：失败"
+        ),
+        tool.FIELD_PYTHON_EFFECT: (
+            "no_group_anonymous[p=fail:denied,c=fail:skipped] | "
+            "no_group_authenticated[p=ok,c=fail:denied] | "
+            "with_group_anonymous[p=fail:denied,c=fail:skipped] | "
+            "with_group_authenticated[p=ok,c=ok]"
+        ),
+    }
+
+    assert tool.check_rows([row]) == []
+
+
+def test_check_auth_csv_results_reports_mismatch():
+    tool = load_check_tool_module()
+    row = {
+        "topic": "topic_a",
+        tool.FIELD_EXPECTED: (
+            "写：实名：成功匿名：成功"
+            "读：不带group+实名：成功不带group+匿名：成功"
+            "带group+实名：成功带group+匿名：成功"
+        ),
+        tool.FIELD_PYTHON_EFFECT: (
+            "no_group_anonymous[p=ok,c=ok] | "
+            "no_group_authenticated[p=ok,c=fail:denied] | "
+            "with_group_anonymous[p=ok,c=ok] | "
+            "with_group_authenticated[p=ok,c=ok]"
+        ),
+    }
+
+    failures = tool.check_rows([row])
+    assert failures == [
+        {
+            "row": 1,
+            "topic": "topic_a",
+            "scenario": "no_group_authenticated.c",
+            "detail": "expected_ok_got_fail",
+        }
+    ]

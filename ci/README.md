@@ -28,19 +28,28 @@ Useful variables:
 - `LIBRDKAFKA_REPO`: local `librdkafka` git repository or worktree.
 - `LIBRDKAFKA_REF`: commit, branch, or tag to archive into the image.
 - `BASE_IMAGE`: build image base. Defaults to
-  `quay.io/pypa/manylinux2014_x86_64:latest` because the Python SDK requires
-  Python 3.11+ and manylinux2014 provides CPython 3.11 under
-  `/opt/python/cp311-cp311/bin/python`.
-- `BUILDER_IMAGE`: build-stage image. Defaults to
-  `docker-reg.devops.xiaohongshu.com/cpp-infra/build_env:brpc_v20250728`,
-  matching the C-only build environment documented in the `librdkafka`
-  `pr-split` worktree. Keep `BUILDER_IMAGE` and `BASE_IMAGE` ABI-compatible
-  because the final image runs the shared `librdkafka` built in the builder
-  stage.
+  `quay.io/pypa/manylinux_2_28_x86_64:latest`. The Python SDK release wheel
+  targets glibc 2.28 and does not support the older
+  `manylinux2014` / `manylinux_2_17` baseline.
+- `BUILDER_IMAGE`: build-stage image. Defaults to the same
+  `quay.io/pypa/manylinux_2_28_x86_64:latest` image so the compiled
+  `librdkafka` ABI matches the final image and the release wheel.
 - `IMAGE_TAG`: output image tag.
 - `INSTALL_OS_DEPS`: set to `1` only for bare custom images that do not already
   provide compiler, CMake, Python 3.11+, zlib, zstd, and OpenSSL development
   files. This defaults to `1` for the builder stage.
+
+The build script forwards `http_proxy`, `https_proxy`, `HTTP_PROXY`,
+`HTTPS_PROXY`, `no_proxy`, and `NO_PROXY` into `docker build` when they are set
+on the host. Use these variables when the manylinux image needs proxy access to
+install OS packages.
+
+The image build fails if `librdkafka` exports bundled `tinycthread` symbols.
+The expected thread symbol is:
+
+```text
+U thrd_create@GLIBC_2.28
+```
 
 ## Run core Python SDK tests
 

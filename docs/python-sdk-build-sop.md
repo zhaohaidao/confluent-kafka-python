@@ -6,7 +6,7 @@
 
 ## 前置条件
 
-需要 Docker 能拉取一个已经包含 `librdkafka` 的 manylinux 镜像。镜像里至少要有：
+需要 Docker 能拉取一个已经包含 `librdkafka` 的 `manylinux_2_28` 镜像。镜像里至少要有：
 
 - `/opt/librdkafka/include/librdkafka/rdkafka.h`
 - `/opt/librdkafka/lib/librdkafka.so`
@@ -18,14 +18,14 @@
 
 ```bash
 export RED_KAFKA_PACKAGE_VERSION=<version>
-export LIBRDKAFKA_IMAGE=<librdkafka-manylinux-image>
+export LIBRDKAFKA_IMAGE=<librdkafka-manylinux_2_28-image>
 ```
 
 示例：
 
 ```bash
 export RED_KAFKA_PACKAGE_VERSION=0.1rc18
-export LIBRDKAFKA_IMAGE=docker-reg.devops.xiaohongshu.com/media/red-kafka-python-librdkafka:c46df5a
+export LIBRDKAFKA_IMAGE=docker-reg.devops.xiaohongshu.com/media/red-kafka-python-librdkafka:<commit>-manylinux_2_28
 ```
 
 ## 2. 确认镜像可用
@@ -39,6 +39,7 @@ ls -l /opt/librdkafka/lib/librdkafka.so
 ls -l /opt/python/cp311-cp311/bin/python
 ls -l /opt/python/cp312-cp312/bin/python
 auditwheel --version
+nm -D /opt/librdkafka/lib/librdkafka.so | grep -E "U[[:space:]]+thrd_create@+GLIBC_2.28"
 '
 ```
 
@@ -62,6 +63,7 @@ export LDFLAGS="-L/opt/librdkafka/lib"
 export LD_LIBRARY_PATH="/opt/librdkafka/lib:${LD_LIBRARY_PATH:-}"
 
 for py in /opt/python/cp311-cp311/bin/python /opt/python/cp312-cp312/bin/python; do
+  "$py" -m pip install --no-cache-dir setuptools wheel
   rm -rf build red_kafka.egg-info /tmp/red-kafka-wheel
   mkdir -p /tmp/red-kafka-wheel
   "$py" -m pip wheel . --no-deps -w /tmp/red-kafka-wheel
@@ -84,8 +86,8 @@ sha256sum dist/* wheelhouse/*
 
 ```text
 red_kafka-<version>.tar.gz
-red_kafka-<version>-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
-red_kafka-<version>-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+red_kafka-<version>-cp311-cp311-manylinux_2_28_x86_64.whl
+red_kafka-<version>-cp312-cp312-manylinux_2_28_x86_64.whl
 ```
 
 不要提交 `build/`、`dist/`、`wheelhouse/` 或 `red_kafka.egg-info/`。

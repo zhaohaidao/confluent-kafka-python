@@ -1,11 +1,17 @@
-ARG BASE_IMAGE=quay.io/pypa/manylinux2014_x86_64:latest
-ARG BUILDER_IMAGE=docker-reg.devops.xiaohongshu.com/cpp-infra/build_env:brpc_v20250728
+ARG BASE_IMAGE=quay.io/pypa/manylinux_2_28_x86_64:latest
+ARG BUILDER_IMAGE=quay.io/pypa/manylinux_2_28_x86_64:latest
 
 FROM ${BUILDER_IMAGE} AS librdkafka-builder
 
 ARG LIBRDKAFKA_COMMIT=unknown
 ARG LIBRDKAFKA_PREFIX=/opt/librdkafka
 ARG INSTALL_OS_DEPS=1
+ARG http_proxy
+ARG https_proxy
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG no_proxy
+ARG NO_PROXY
 
 COPY librdkafka-src.tar /tmp/librdkafka-src.tar
 
@@ -24,7 +30,9 @@ RUN set -eux; \
             zstd-dev \
             openssl-dev; \
     elif command -v yum >/dev/null 2>&1; then \
-        if [ ! -f /etc/yum.repos.d/epel-aliyun.repo ]; then \
+        os_version=""; \
+        if [ -f /etc/os-release ]; then . /etc/os-release; os_version="${VERSION_ID:-}"; fi; \
+        if [ "${os_version%%.*}" = "7" ] && [ ! -f /etc/yum.repos.d/epel-aliyun.repo ]; then \
             printf '%s\n' \
                 '[epel-aliyun]' \
                 'name=EPEL 7 aliyun' \
@@ -42,7 +50,7 @@ RUN set -eux; \
             libzstd-devel \
             openssl-devel"; \
         if ! command -v cmake >/dev/null 2>&1; then yum_pkgs="${yum_pkgs} cmake"; fi; \
-        yum --disableplugin=fastestmirror install -y ${yum_pkgs}; \
+        yum install -y ${yum_pkgs}; \
         yum clean all || true; \
     elif command -v apt-get >/dev/null 2>&1; then \
         apt-get update; \
@@ -72,6 +80,14 @@ RUN set -eux; \
     cmake --install /tmp/librdkafka-build --prefix "${LIBRDKAFKA_PREFIX}"; \
     test -f "${LIBRDKAFKA_PREFIX}/include/librdkafka/rdkafka.h"; \
     { test -f "${LIBRDKAFKA_PREFIX}/lib/librdkafka.so" || test -f "${LIBRDKAFKA_PREFIX}/lib64/librdkafka.so"; }; \
+    libpath="${LIBRDKAFKA_PREFIX}/lib/librdkafka.so"; \
+    if [ ! -f "${libpath}" ]; then libpath="${LIBRDKAFKA_PREFIX}/lib64/librdkafka.so"; fi; \
+    nm -D "${libpath}" | tee /tmp/librdkafka-symbols.txt; \
+    grep -E 'U[[:space:]]+thrd_create@+GLIBC_2.28' /tmp/librdkafka-symbols.txt; \
+    if grep -Eq '(^|[[:space:]])T[[:space:]]+thrd_create$' /tmp/librdkafka-symbols.txt; then \
+        echo "librdkafka must use glibc C11 thrd_create, not bundled tinycthread" >&2; \
+        exit 1; \
+    fi; \
     rm -rf /tmp/librdkafka-src /tmp/librdkafka-build /tmp/librdkafka-src.tar
 
 FROM ${BASE_IMAGE}
@@ -95,4 +111,10 @@ RUN set -eux; \
     test -f "${LIBRDKAFKA_PREFIX}/include/librdkafka/rdkafka.h"; \
     { test -f "${LIBRDKAFKA_PREFIX}/lib/librdkafka.so" || test -f "${LIBRDKAFKA_PREFIX}/lib64/librdkafka.so"; }; \
     ldd "${LIBRDKAFKA_PREFIX}/lib/librdkafka.so"; \
+    nm -D "${LIBRDKAFKA_PREFIX}/lib/librdkafka.so" | tee /tmp/librdkafka-symbols.txt; \
+    grep -E 'U[[:space:]]+thrd_create@+GLIBC_2.28' /tmp/librdkafka-symbols.txt; \
+    if grep -Eq '(^|[[:space:]])T[[:space:]]+thrd_create$' /tmp/librdkafka-symbols.txt; then \
+        echo "librdkafka must use glibc C11 thrd_create, not bundled tinycthread" >&2; \
+        exit 1; \
+    fi; \
     if command -v ldconfig >/dev/null 2>&1; then ldconfig; fi

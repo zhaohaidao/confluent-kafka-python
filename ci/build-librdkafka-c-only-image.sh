@@ -6,13 +6,30 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." >/dev/null && pwd)"
 
 LIBRDKAFKA_REPO="${LIBRDKAFKA_REPO:-/data/kafka/librdkafka/.worktrees/pr-split}"
 LIBRDKAFKA_REF="${LIBRDKAFKA_REF:-HEAD}"
-BASE_IMAGE="${BASE_IMAGE:-quay.io/pypa/manylinux_2_28_x86_64:latest}"
-BUILDER_IMAGE="${BUILDER_IMAGE:-quay.io/pypa/manylinux_2_28_x86_64:latest}"
+MANYLINUX_BASELINE="${MANYLINUX_BASELINE:-2_28}"
+
+case "${MANYLINUX_BASELINE}" in
+    2_28)
+        default_image="quay.io/pypa/manylinux_2_28_x86_64:latest"
+        image_suffix="manylinux_2_28"
+        ;;
+    2014|2_17)
+        default_image="quay.io/pypa/manylinux2014_x86_64:latest"
+        image_suffix="manylinux2014"
+        ;;
+    *)
+        printf 'Unsupported MANYLINUX_BASELINE=%s; expected 2_28 or 2014\n' "${MANYLINUX_BASELINE}" >&2
+        exit 1
+        ;;
+esac
+
+BASE_IMAGE="${BASE_IMAGE:-${default_image}}"
+BUILDER_IMAGE="${BUILDER_IMAGE:-${default_image}}"
 INSTALL_OS_DEPS="${INSTALL_OS_DEPS:-1}"
 
 commit="$(git -C "${LIBRDKAFKA_REPO}" rev-parse "${LIBRDKAFKA_REF}^{commit}")"
 short_commit="$(git -C "${LIBRDKAFKA_REPO}" rev-parse --short "${commit}")"
-IMAGE_TAG="${IMAGE_TAG:-red-kafka-python-librdkafka:${short_commit}-manylinux_2_28}"
+IMAGE_TAG="${IMAGE_TAG:-red-kafka-python-librdkafka:${short_commit}-${image_suffix}}"
 
 tmpdir="$(mktemp -d)"
 cleanup() {
@@ -28,6 +45,7 @@ docker build \
     --build-arg "LIBRDKAFKA_COMMIT=${commit}" \
     --build-arg "LIBRDKAFKA_PREFIX=/opt/librdkafka" \
     --build-arg "INSTALL_OS_DEPS=${INSTALL_OS_DEPS}" \
+    --build-arg "MANYLINUX_BASELINE=${MANYLINUX_BASELINE}" \
     --build-arg "http_proxy=${http_proxy:-}" \
     --build-arg "https_proxy=${https_proxy:-}" \
     --build-arg "HTTP_PROXY=${HTTP_PROXY:-${http_proxy:-}}" \

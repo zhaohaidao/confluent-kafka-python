@@ -6,6 +6,7 @@ FROM ${BUILDER_IMAGE} AS librdkafka-builder
 ARG LIBRDKAFKA_COMMIT=unknown
 ARG LIBRDKAFKA_PREFIX=/opt/librdkafka
 ARG INSTALL_OS_DEPS=1
+ARG MANYLINUX_BASELINE=2_28
 ARG http_proxy
 ARG https_proxy
 ARG HTTP_PROXY
@@ -32,14 +33,19 @@ RUN set -eux; \
     elif command -v yum >/dev/null 2>&1; then \
         os_version=""; \
         if [ -f /etc/os-release ]; then . /etc/os-release; os_version="${VERSION_ID:-}"; fi; \
-        if [ "${os_version%%.*}" = "7" ] && [ ! -f /etc/yum.repos.d/epel-aliyun.repo ]; then \
-            printf '%s\n' \
-                '[epel-aliyun]' \
-                'name=EPEL 7 aliyun' \
-                'baseurl=http://mirrors.aliyun.com/epel/7/x86_64/' \
-                'enabled=1' \
-                'gpgcheck=0' \
-                >/etc/yum.repos.d/epel-aliyun.repo; \
+        if [ "${os_version%%.*}" = "7" ]; then \
+            if ls /etc/yum.repos.d/epel*.repo >/dev/null 2>&1; then \
+                sed -i 's/^enabled=1/enabled=0/' /etc/yum.repos.d/epel*.repo; \
+            fi; \
+            if [ ! -f /etc/yum.repos.d/epel-aliyun.repo ]; then \
+                printf '%s\n' \
+                    '[epel-aliyun]' \
+                    'name=EPEL 7 aliyun' \
+                    'baseurl=http://mirrors.aliyun.com/epel/7/x86_64/' \
+                    'enabled=1' \
+                    'gpgcheck=0' \
+                    >/etc/yum.repos.d/epel-aliyun.repo; \
+            fi; \
         fi; \
         yum_pkgs="\
             gcc \
@@ -71,11 +77,16 @@ RUN set -eux; \
     command -v gcc; \
     mkdir -p /tmp/librdkafka-src /tmp/librdkafka-build "${LIBRDKAFKA_PREFIX}"; \
     tar -xf /tmp/librdkafka-src.tar -C /tmp/librdkafka-src; \
+    shared_linker_flags=""; \
+    if [ "${MANYLINUX_BASELINE}" != "2_28" ]; then \
+        shared_linker_flags="-Wl,-Bsymbolic-functions"; \
+    fi; \
     cmake -S /tmp/librdkafka-src -B /tmp/librdkafka-build \
         -DRDKAFKA_BUILD_CPP=OFF \
         -DBUILD_SHARED_LIBS=ON \
         -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_POLICY_VERSION_MINIMUM=3.5; \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DCMAKE_SHARED_LINKER_FLAGS="${shared_linker_flags}"; \
     cmake --build /tmp/librdkafka-build --target rdkafka -- -j"$(nproc)"; \
     cmake --install /tmp/librdkafka-build --prefix "${LIBRDKAFKA_PREFIX}"; \
     test -f "${LIBRDKAFKA_PREFIX}/include/librdkafka/rdkafka.h"; \
@@ -83,10 +94,22 @@ RUN set -eux; \
     libpath="${LIBRDKAFKA_PREFIX}/lib/librdkafka.so"; \
     if [ ! -f "${libpath}" ]; then libpath="${LIBRDKAFKA_PREFIX}/lib64/librdkafka.so"; fi; \
     nm -D "${libpath}" | tee /tmp/librdkafka-symbols.txt; \
-    grep -E 'U[[:space:]]+thrd_create@+GLIBC_2.28' /tmp/librdkafka-symbols.txt; \
-    if grep -Eq '(^|[[:space:]])T[[:space:]]+thrd_create$' /tmp/librdkafka-symbols.txt; then \
-        echo "librdkafka must use glibc C11 thrd_create, not bundled tinycthread" >&2; \
-        exit 1; \
+    if [ "${MANYLINUX_BASELINE}" = "2_28" ]; then \
+        grep -E 'U[[:space:]]+thrd_create@+GLIBC_2.28' /tmp/librdkafka-symbols.txt; \
+        if grep -Eq '(^|[[:space:]])T[[:space:]]+thrd_create$' /tmp/librdkafka-symbols.txt; then \
+            echo "librdkafka must use glibc C11 thrd_create for manylinux_2_28" >&2; \
+            exit 1; \
+        fi; \
+    else \
+        if grep -Eq 'U[[:space:]]+thrd_create(@|$)' /tmp/librdkafka-symbols.txt; then \
+            echo "manylinux2014 librdkafka must not call host glibc thrd_create" >&2; \
+            exit 1; \
+        fi; \
+        if objdump -R "${libpath}" | grep -q 'thrd_create'; then \
+            echo "manylinux2014 librdkafka has an interposable thrd_create relocation" >&2; \
+            exit 1; \
+        fi; \
+        grep -Eq '(^|[[:space:]])T[[:space:]]+thrd_create$' /tmp/librdkafka-symbols.txt; \
     fi; \
     rm -rf /tmp/librdkafka-src /tmp/librdkafka-build /tmp/librdkafka-src.tar
 
@@ -94,6 +117,7 @@ FROM ${BASE_IMAGE}
 
 ARG LIBRDKAFKA_COMMIT=unknown
 ARG LIBRDKAFKA_PREFIX=/opt/librdkafka
+ARG MANYLINUX_BASELINE=2_28
 
 ENV LIBRDKAFKA_COMMIT=${LIBRDKAFKA_COMMIT}
 ENV LIBRDKAFKA_PREFIX=${LIBRDKAFKA_PREFIX}
@@ -112,9 +136,17 @@ RUN set -eux; \
     { test -f "${LIBRDKAFKA_PREFIX}/lib/librdkafka.so" || test -f "${LIBRDKAFKA_PREFIX}/lib64/librdkafka.so"; }; \
     ldd "${LIBRDKAFKA_PREFIX}/lib/librdkafka.so"; \
     nm -D "${LIBRDKAFKA_PREFIX}/lib/librdkafka.so" | tee /tmp/librdkafka-symbols.txt; \
-    grep -E 'U[[:space:]]+thrd_create@+GLIBC_2.28' /tmp/librdkafka-symbols.txt; \
-    if grep -Eq '(^|[[:space:]])T[[:space:]]+thrd_create$' /tmp/librdkafka-symbols.txt; then \
-        echo "librdkafka must use glibc C11 thrd_create, not bundled tinycthread" >&2; \
-        exit 1; \
+    if [ "${MANYLINUX_BASELINE}" = "2_28" ]; then \
+        grep -E 'U[[:space:]]+thrd_create@+GLIBC_2.28' /tmp/librdkafka-symbols.txt; \
+        if grep -Eq '(^|[[:space:]])T[[:space:]]+thrd_create$' /tmp/librdkafka-symbols.txt; then \
+            echo "librdkafka must use glibc C11 thrd_create for manylinux_2_28" >&2; \
+            exit 1; \
+        fi; \
+    else \
+        grep -Eq '(^|[[:space:]])T[[:space:]]+thrd_create$' /tmp/librdkafka-symbols.txt; \
+        if objdump -R "${LIBRDKAFKA_PREFIX}/lib/librdkafka.so" | grep -q 'thrd_create'; then \
+            echo "manylinux2014 librdkafka has an interposable thrd_create relocation" >&2; \
+            exit 1; \
+        fi; \
     fi; \
     if command -v ldconfig >/dev/null 2>&1; then ldconfig; fi

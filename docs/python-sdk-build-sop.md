@@ -6,7 +6,7 @@
 
 ## 前置条件
 
-需要 Docker 能拉取一个已经包含 `librdkafka` 的 `manylinux_2_28` 镜像。镜像里至少要有：
+需要 Docker 能拉取一个已经包含 `librdkafka` 的 manylinux 镜像。镜像可以是 `manylinux_2_28`，也可以是 `manylinux2014`。镜像里至少要有：
 
 - `/opt/librdkafka/include/librdkafka/rdkafka.h`
 - `/opt/librdkafka/lib/librdkafka.so`
@@ -18,14 +18,14 @@
 
 ```bash
 export RED_KAFKA_PACKAGE_VERSION=<version>
-export LIBRDKAFKA_IMAGE=<librdkafka-manylinux_2_28-image>
+export LIBRDKAFKA_IMAGE=<librdkafka-manylinux-image>
 ```
 
 示例：
 
 ```bash
 export RED_KAFKA_PACKAGE_VERSION=0.1rc18
-export LIBRDKAFKA_IMAGE=docker-reg.devops.xiaohongshu.com/media/red-kafka-python-librdkafka:<commit>-manylinux_2_28
+export LIBRDKAFKA_IMAGE=docker-reg.devops.xiaohongshu.com/media/red-kafka-python-librdkafka:<commit>-manylinux2014
 ```
 
 ## 2. 确认镜像可用
@@ -39,9 +39,25 @@ ls -l /opt/librdkafka/lib/librdkafka.so
 ls -l /opt/python/cp311-cp311/bin/python
 ls -l /opt/python/cp312-cp312/bin/python
 auditwheel --version
-nm -D /opt/librdkafka/lib/librdkafka.so | grep -E "U[[:space:]]+thrd_create@+GLIBC_2.28"
+nm -D /opt/librdkafka/lib/librdkafka.so | grep -E "thrd_create"
 '
 ```
+
+如果镜像是 `manylinux_2_28`，预期能看到 `U thrd_create@GLIBC_2.28`。
+
+如果镜像是 `manylinux2014`，预期能看到 `T thrd_create`，并且还需要确认没有 `thrd_create` relocation：
+
+```bash
+docker run --rm "$LIBRDKAFKA_IMAGE" bash -lc '
+set -e
+objdump -R /opt/librdkafka/lib/librdkafka.so | grep -q "thrd_create" && {
+  echo "unexpected thrd_create relocation"
+  exit 1
+}
+'
+```
+
+`manylinux2014` 镜像里 `T thrd_create` 是正常的；关键是 `objdump -R` 里不能有 `thrd_create` relocation，否则运行在新 glibc 宿主机时可能被宿主 `thrd_create` 抢占，导致线程创建成功却被误判失败。
 
 如果这里失败，先处理 Docker 登录、镜像 tag 或镜像内容问题。
 
@@ -88,6 +104,13 @@ sha256sum dist/* wheelhouse/*
 red_kafka-<version>.tar.gz
 red_kafka-<version>-cp311-cp311-manylinux_2_28_x86_64.whl
 red_kafka-<version>-cp312-cp312-manylinux_2_28_x86_64.whl
+```
+
+如果使用 `manylinux2014` 镜像，wheel 文件名会是：
+
+```text
+red_kafka-<version>-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+red_kafka-<version>-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
 ```
 
 不要提交 `build/`、`dist/`、`wheelhouse/` 或 `red_kafka.egg-info/`。

@@ -1,116 +1,59 @@
-# Python SDK 本地构建 SOP
+# Python SDK 构建 SOP
 
-目标只有一个：在本地构建出 `red-kafka` Python 包文件。本文档不包含测试、不包含上传 PyPI、不包含发布验证。
+## 0. 启动容器
 
-所有命令在仓库根目录执行。
-
-## 前置条件
-
-需要 Docker 能拉取一个已经包含 `librdkafka` 的 manylinux 镜像。镜像可以是 `manylinux_2_28`，也可以是 `manylinux2014`。镜像里至少要有：
-
-- `/opt/librdkafka/include/librdkafka/rdkafka.h`
-- `/opt/librdkafka/lib/librdkafka.so`
-- `/opt/python/cp311-cp311/bin/python`
-- `/opt/python/cp312-cp312/bin/python`
-- `auditwheel`
-
-## 1. 设置版本和镜像
+启动已经包含 `/opt/librdkafka` 的构建镜像，并把 bash 当前目录设置为代码库根目录：
 
 ```bash
-export RED_KAFKA_PACKAGE_VERSION=<version>
-export LIBRDKAFKA_IMAGE=<librdkafka-manylinux-image>
-```
+cd "$(git rev-parse --show-toplevel)"
+export LIBRDKAFKA_IMAGE=docker-reg.devops.xiaohongshu.com/media/red-kafka-python-librdkafka:280be6f
 
-示例：
-
-```bash
-export RED_KAFKA_PACKAGE_VERSION=0.1rc18
-export LIBRDKAFKA_IMAGE=docker-reg.devops.xiaohongshu.com/media/red-kafka-python-librdkafka:<commit>-manylinux2014
-```
-
-## 2. 确认镜像可用
-
-```bash
-docker pull "$LIBRDKAFKA_IMAGE"
-docker run --rm "$LIBRDKAFKA_IMAGE" bash -lc '
-set -e
-ls -l /opt/librdkafka/include/librdkafka/rdkafka.h
-ls -l /opt/librdkafka/lib/librdkafka.so
-ls -l /opt/python/cp311-cp311/bin/python
-ls -l /opt/python/cp312-cp312/bin/python
-auditwheel --version
-nm -D /opt/librdkafka/lib/librdkafka.so | grep -E "thrd_create"
-'
-```
-
-如果镜像是 `manylinux_2_28`，预期能看到 `U thrd_create@GLIBC_2.28`。
-
-如果镜像是 `manylinux2014`，预期能看到 `T thrd_create`，并且还需要确认没有 `thrd_create` relocation：
-
-```bash
-docker run --rm "$LIBRDKAFKA_IMAGE" bash -lc '
-set -e
-objdump -R /opt/librdkafka/lib/librdkafka.so | grep -q "thrd_create" && {
-  echo "unexpected thrd_create relocation"
-  exit 1
-}
-'
-```
-
-`manylinux2014` 镜像里 `T thrd_create` 是正常的；关键是 `objdump -R` 里不能有 `thrd_create` relocation，否则运行在新 glibc 宿主机时可能被宿主 `thrd_create` 抢占，导致线程创建成功却被误判失败。
-
-如果这里失败，先处理 Docker 登录、镜像 tag 或镜像内容问题。
-
-## 3. 构建包
-
-```bash
-rm -rf build dist wheelhouse red_kafka.egg-info
-mkdir -p dist wheelhouse
-
-docker run --rm \
-  -e "RED_KAFKA_PACKAGE_VERSION=$RED_KAFKA_PACKAGE_VERSION" \
-  -v "$PWD:/io" \
-  -w /io \
+docker run --rm -it \
+  -v "$PWD:$PWD" \
+  -w "$PWD" \
   "$LIBRDKAFKA_IMAGE" \
-  bash -lc '
-set -euo pipefail
-export CFLAGS="-I/opt/librdkafka/include"
-export LDFLAGS="-L/opt/librdkafka/lib"
-export LD_LIBRARY_PATH="/opt/librdkafka/lib:${LD_LIBRARY_PATH:-}"
-
-for py in /opt/python/cp311-cp311/bin/python /opt/python/cp312-cp312/bin/python; do
-  "$py" -m pip install --no-cache-dir setuptools wheel
-  rm -rf build red_kafka.egg-info /tmp/red-kafka-wheel
-  mkdir -p /tmp/red-kafka-wheel
-  "$py" -m pip wheel . --no-deps -w /tmp/red-kafka-wheel
-  auditwheel repair /tmp/red-kafka-wheel/red_kafka-*.whl -w wheelhouse
-done
-
-rm -rf build red_kafka.egg-info
-/opt/python/cp311-cp311/bin/python setup.py sdist -d dist
-'
+  bash
 ```
 
-## 4. 查看产物
+办公网络不需要设置代理；如果容器内访问内网 PyPI 失败，再设置代理：
 
 ```bash
-find dist wheelhouse -maxdepth 1 -type f -printf "%f\n" | sort
-sha256sum dist/* wheelhouse/*
+export http_proxy=http://10.3.4.34:3128
+export https_proxy=http://10.3.4.34:3128
+export HTTP_PROXY=http://10.3.4.34:3128
+export HTTPS_PROXY=http://10.3.4.34:3128
+env | grep -i proxy
 ```
 
-正常会看到 3 个文件：
+## 1. 构建并验证
+
+执行目录：代码库根目录。
+
+```bash
+./ci/build-python-package-in-librdkafka-image.sh
+```
+
+## 2. 产物
+
+脚本成功后会输出产物文件名和 sha256：
 
 ```text
 red_kafka-<version>.tar.gz
-red_kafka-<version>-cp311-cp311-manylinux_2_28_x86_64.whl
-red_kafka-<version>-cp312-cp312-manylinux_2_28_x86_64.whl
-```
-
-如果使用 `manylinux2014` 镜像，wheel 文件名会是：
-
-```text
 red_kafka-<version>-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
 red_kafka-<version>-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
 ```
 
 不要提交 `build/`、`dist/`、`wheelhouse/` 或 `red_kafka.egg-info/`。
+
+## 3. 可选：发布到内网 pip 仓库
+
+执行目录：代码库根目录。
+
+默认只构建本地包，不发布；只有需要发布到内网 pip 仓库时，才执行本步骤。
+CI 在任务环境变量里配置 `TWINE_USERNAME` / `TWINE_PASSWORD`，不要把凭据提交进代码库。
+
+```bash
+export TWINE_USERNAME=red-pypi
+export TWINE_PASSWORD=xhsdev
+./ci/publish-python-package-to-internal-pypi.sh 0.1rc24
+```

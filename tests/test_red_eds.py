@@ -81,7 +81,7 @@ def test_resolve_eds_appends_sasl_suffix_when_security_protocol_is_set(monkeypat
     }
     resolved = red_eds.resolve_eds_bootstrap(conf)
 
-    assert client.calls == ["kafka-eds-paastestsasl"]
+    assert client.calls == ["kafka-eds-paastest-sasl"]
     assert resolved["bootstrap.servers"] == "10.1.1.1:9093"
     assert resolved["original.metadata.broker.list"] == "eds://kafka-eds-paastest"
 
@@ -147,12 +147,31 @@ def test_resolve_eds_does_not_duplicate_sasl_suffix(monkeypatch):
     monkeypatch.setattr(red_eds, "_create_eds_client", lambda: client)
 
     conf = {
+        "bootstrap.servers": "eds://kafka-eds-paastest-SASL",
+        "security.protocol": "SASL_PLAINTEXT",
+    }
+    resolved = red_eds.resolve_eds_bootstrap(conf)
+
+    assert client.calls == ["kafka-eds-paastest-sasl"]
+    assert resolved["bootstrap.servers"] == "10.1.1.1:9093"
+    assert (
+        resolved["original.metadata.broker.list"]
+        == "eds://kafka-eds-paastest-SASL"
+    )
+
+
+def test_resolve_eds_appends_sasl_suffix_for_unhyphenated_sasl_suffix(monkeypatch):
+    _set_env(monkeypatch)
+    client = DummyEdsClient(["10.1.1.1:9093"])
+    monkeypatch.setattr(red_eds, "_create_eds_client", lambda: client)
+
+    conf = {
         "bootstrap.servers": "eds://kafka-eds-paastestSASL",
         "security.protocol": "SASL_PLAINTEXT",
     }
     resolved = red_eds.resolve_eds_bootstrap(conf)
 
-    assert client.calls == ["kafka-eds-paastestsasl"]
+    assert client.calls == ["kafka-eds-paastestSASL-sasl"]
     assert resolved["bootstrap.servers"] == "10.1.1.1:9093"
     assert (
         resolved["original.metadata.broker.list"]

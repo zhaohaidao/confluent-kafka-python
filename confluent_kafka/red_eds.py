@@ -15,7 +15,7 @@ ORIGINAL_BOOTSTRAP_CONFIG = "original.metadata.broker.list"
 SECURITY_PROTOCOL_CONFIG = "security.protocol"
 SECURITY_PROTOCOL_ENV = "kafka_security_protocol"
 SASL_JAAS_CONFIG = "sasl.jaas.config"
-EDS_SECURITY_SERVICE_NAME_SUFFIX = "sasl"
+EDS_SECURITY_SERVICE_NAME_SUFFIX = "-sasl"
 ENV_CONFIG = "env.config"
 KMETA_URL_ENV = "KMETA_URL"
 KMETA_CLUSTER_API = "/api/kmeta/cluster/"
@@ -426,8 +426,12 @@ def _resolve_eds_service_name(service_name, conf):
         return service_name
     if not _security_enabled(conf):
         return service_name
-    if service_name.lower().endswith(EDS_SECURITY_SERVICE_NAME_SUFFIX):
-        return service_name[: -len(EDS_SECURITY_SERVICE_NAME_SUFFIX)] + EDS_SECURITY_SERVICE_NAME_SUFFIX
+    normalized_service_name = service_name.lower()
+    if normalized_service_name.endswith(EDS_SECURITY_SERVICE_NAME_SUFFIX):
+        return (
+            service_name[: -len(EDS_SECURITY_SERVICE_NAME_SUFFIX)]
+            + EDS_SECURITY_SERVICE_NAME_SUFFIX
+        )
     return service_name + EDS_SECURITY_SERVICE_NAME_SUFFIX
 
 

@@ -106,6 +106,12 @@ Admin_options_to_c (Handle *self, rd_kafka_admin_op_t for_api,
         rd_kafka_resp_err_t err;
         char errstr[512];
 
+        /* Backport source: 36a9e6c "Add null checks to fix SEGV (#2122)". */
+        if (!self->rk) {
+                PyErr_SetString(PyExc_RuntimeError, "AdminClient has been closed");
+                return NULL;
+        }
+
         c_options = rd_kafka_AdminOptions_new(self->rk, for_api);
         if (!c_options) {
                 PyErr_Format(PyExc_RuntimeError,
@@ -1294,7 +1300,7 @@ static void Admin_background_event_cb (rd_kafka_t *rk, rd_kafka_event_t *rkev,
         PyGILState_STATE gstate;
         PyObject *error, *method, *ret;
         PyObject *result = NULL;
-        PyObject *exctype = NULL, *exc = NULL, *excargs = NULL;
+        PyObject *exc = NULL, *excargs = NULL;
 
         /* Acquire GIL */
         gstate = PyGILState_Ensure();
@@ -1395,16 +1401,16 @@ static void Admin_background_event_cb (rd_kafka_t *rk, rd_kafka_event_t *rkev,
                                                 "but no exception raised",
                                                 rd_kafka_event_name(rkev));
                 } else {
-                        /* Extract the exception type and message
-                         * and pass it as an error to raise and subsequently
-                         * the future.
-                         * We loose the backtrace here unfortunately, so
-                         * these errors are a bit cryptic. */
-                        PyObject *trace = NULL;
-
-                        /* Fetch (and clear) currently raised exception */
-                        PyErr_Fetch(&exctype, &error, &trace);
-                        Py_XDECREF(trace);
+                        /* Backport source: 9bfe49c
+                         * "Fix error propagation rule for Python's C API (#2019)". */
+                        cfl_exception_fetch(&exc);
+                        if (!exc) {
+                                error = KafkaError_new0(
+                                        RD_KAFKA_RESP_ERR__INVALID_ARG,
+                                        "BUG: Event %s handling failed "
+                                        "and no callback exception was captured",
+                                        rd_kafka_event_name(rkev));
+                        }
                 }
 
                 goto raise;
@@ -1433,22 +1439,17 @@ static void Admin_background_event_cb (rd_kafka_t *rk, rd_kafka_event_t *rkev,
          * Pass an exception to future.set_exception().
          */
 
-        if (!exctype) {
+        if (!exc) {
                 /* No previous exception raised, use KafkaException */
-                exctype = KafkaException;
-                Py_INCREF(exctype);
+                excargs = PyTuple_New(1);
+                Py_INCREF(error); /* tuple's reference */
+                PyTuple_SET_ITEM(excargs, 0, error);
+                exc = ((PyTypeObject *)KafkaException)->tp_new(
+                        (PyTypeObject *)KafkaException, NULL, NULL);
+                exc->ob_type->tp_init(exc, excargs, NULL);
+                Py_DECREF(excargs);
+                Py_XDECREF(error); /* from error source above */
         }
-
-        /* Create a new exception based on exception type and error. */
-        excargs = PyTuple_New(1);
-        Py_INCREF(error); /* tuple's reference */
-        PyTuple_SET_ITEM(excargs, 0, error);
-        exc = ((PyTypeObject *)exctype)->tp_new(
-                (PyTypeObject *)exctype, NULL, NULL);
-        exc->ob_type->tp_init(exc, excargs, NULL);
-        Py_DECREF(excargs);
-        Py_XDECREF(exctype);
-        Py_XDECREF(error); /* from error source above */
 
         /*
          * Call future.set_exception(exc)
@@ -1567,7 +1568,5 @@ PyTypeObject AdminType = {
         0,                         /* tp_alloc */
         Admin_new                  /* tp_new */
 };
-
-
 
 

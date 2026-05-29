@@ -163,6 +163,9 @@ static void dr_msg_cb (rd_kafka_t *rk, const rd_kafka_message_t *rkm,
 	if (result)
 		Py_DECREF(result);
 	else {
+		/* Backport source: 9bfe49c
+		 * "Fix error propagation rule for Python's C API (#2019)". */
+		CallState_fetch_exception(cs);
 		CallState_crash(cs);
 		rd_kafka_yield(rk);
 	}
@@ -228,7 +231,7 @@ Producer_produce0 (Handle *self,
 static PyObject *Producer_produce (Handle *self, PyObject *args,
 				       PyObject *kwargs) {
 	const char *topic, *value = NULL, *key = NULL;
-	int value_len = 0, key_len = 0;
+	Py_ssize_t value_len = 0, key_len = 0;
 	int partition = RD_KAFKA_PARTITION_UA;
 	PyObject *headers = NULL, *dr_cb = NULL, *dr_cb2 = NULL;
         long long timestamp = 0;
@@ -293,6 +296,17 @@ static PyObject *Producer_produce (Handle *self, PyObject *args,
 	if (!dr_cb || dr_cb == Py_None)
 		dr_cb = self->u.Producer.default_dr_cb;
 
+        if (!self->rk) {
+#ifdef RD_KAFKA_V_HEADERS
+                /* Backport source: 78394e5
+                 * "NONJAVACLI-4237 Fix memory leak in Producer.produce() when headers are provided and exceptions occur (#2170)". */
+                if (rd_headers)
+                        rd_kafka_headers_destroy(rd_headers);
+#endif
+                PyErr_SetString(PyExc_RuntimeError, "Producer closed");
+                return NULL;
+        }
+
 	/* Create msgstate if necessary, may return NULL if no callbacks
 	 * are wanted. */
 	msgstate = Producer_msgstate_new(self, dr_cb);
@@ -317,6 +331,13 @@ static PyObject *Producer_produce (Handle *self, PyObject *args,
         if (err) {
 		if (msgstate)
 			Producer_msgstate_destroy(msgstate);
+
+#ifdef RD_KAFKA_V_HEADERS
+                /* Backport source: 78394e5
+                 * "NONJAVACLI-4237 Fix memory leak in Producer.produce() when headers are provided and exceptions occur (#2170)". */
+                if (rd_headers)
+                        rd_kafka_headers_destroy(rd_headers);
+#endif
 
 		if (err == RD_KAFKA_RESP_ERR__QUEUE_FULL)
 			PyErr_Format(PyExc_BufferError,
@@ -466,6 +487,12 @@ static PyMethodDef Producer_methods[] = {
         { "list_topics", (PyCFunction)list_topics, METH_VARARGS|METH_KEYWORDS,
           list_topics_doc
         },
+        { "stats_collect", (PyCFunction)stats_collect, METH_NOARGS,
+          stats_collect_doc
+        },
+        { "config_dump", (PyCFunction)config_dump, METH_NOARGS,
+          config_dump_doc
+        },
 
 	{ NULL }
 };
@@ -524,9 +551,9 @@ static PyObject *Producer_new (PyTypeObject *type, PyObject *args,
 
 
 
-PyTypeObject ProducerType = {
+PyTypeObject CProducerType = {
 	PyVarObject_HEAD_INIT(NULL, 0)
-	"cimpl.Producer",        /*tp_name*/
+	"cimpl.CProducer",       /*tp_name*/
 	sizeof(Handle),      /*tp_basicsize*/
 	0,                         /*tp_itemsize*/
 	(destructor)Producer_dealloc, /*tp_dealloc*/
@@ -548,7 +575,7 @@ PyTypeObject ProducerType = {
 	Py_TPFLAGS_HAVE_GC, /*tp_flags*/
         "Asynchronous Kafka Producer\n"
         "\n"
-        ".. py:function:: Producer(config)\n"
+        ".. py:function:: CProducer(config)\n"
         "\n"
         "  :param dict config: Configuration properties. At a minimum ``bootstrap.servers`` **should** be set\n"
         "\n"
@@ -578,7 +605,3 @@ PyTypeObject ProducerType = {
 	0,                         /* tp_alloc */
 	Producer_new           /* tp_new */
 };
-
-
-
-

@@ -16,6 +16,7 @@ from ..cimpl import (KafkaException, # noqa
                      RESOURCE_TOPIC,
                      RESOURCE_GROUP,
                      RESOURCE_BROKER)
+from ..red_eds import resolve_bootstrap
 
 import concurrent.futures
 import functools
@@ -213,7 +214,7 @@ class AdminClient (_AdminClientImpl):
 
         At least 'bootstrap.servers' should be configured.
         """
-        super(AdminClient, self).__init__(conf)
+        super(AdminClient, self).__init__(resolve_bootstrap(conf))
 
     @staticmethod
     def _make_topics_result(f, futmap):

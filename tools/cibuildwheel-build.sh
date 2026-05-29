@@ -22,10 +22,26 @@ fi
 LIBRDKAFKA_VERSION=$2
 
 if [[ -z $LIBRDKAFKA_VERSION ]]; then
-    LIBRDKAFKA_VERSION=master
+    if [[ -n $RDKAFKA_SOURCE_DIR ]]; then
+        LIBRDKAFKA_VERSION=local
+    else
+        LIBRDKAFKA_VERSION=master
+    fi
 fi
 
 set -e
+
+if [[ -z $CIBW_BUILD ]]; then
+    export CIBW_BUILD="cp311-*"
+fi
+
+if [[ -z $CIBW_SKIP ]]; then
+    export CIBW_SKIP="cp27-* cp33-* cp34-* cp35-* cp36-* cp37-* cp38-* cp39-* cp310-* pp*"
+fi
+
+if [[ -n $RDKAFKA_SOURCE_DIR ]]; then
+    export RDKAFKA_SOURCE_DIR
+fi
 
 
 _CIBW_ARGS=
@@ -52,11 +68,10 @@ case "$(uname -s)" in
 esac
 
 if ! which cibuildwheel 2>/dev/null ; then
-    pip install cibuildwheel==0.4.1
+    pip3 install 'cibuildwheel==2.8.1'
 fi
 
 cibuildwheel $_CIBW_ARGS --output-dir "$OUT_DIR"
 
 echo "Packages in $OUT_DIR:"
 (cd $OUT_DIR ; ls -la)
-

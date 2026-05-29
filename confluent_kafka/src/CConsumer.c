@@ -338,6 +338,9 @@ static void Consumer_offset_commit_cb (rd_kafka_t *rk, rd_kafka_resp_err_t err,
         if (result)
                 Py_DECREF(result);
         else {
+                /* Backport source: 9bfe49c
+                 * "Fix error propagation rule for Python's C API (#2019)". */
+                CallState_fetch_exception(cs);
                 CallState_crash(cs);
                 rd_kafka_yield(rk);
         }
@@ -420,6 +423,24 @@ static PyObject *Consumer_commit (Handle *self, PyObject *args,
 		}
 
 		m = (Message *)msg;
+                /* Backport source: a6d2e1e
+                 * "Fixed a segfault when 'commit' or 'store_offsets' consumer method is called incorrectly with errored Message object (#1754)". */
+                if (m->error && m->error != Py_None) {
+                        PyObject *errstr = NULL;
+                        PyObject *errstr8 = NULL;
+                        const char *c_errstr = NULL;
+
+                        errstr = cfl_PyObject_Unistr(m->error);
+                        if (errstr)
+                                c_errstr = cfl_PyUnistr_AsUTF8(errstr, &errstr8);
+
+                        cfl_PyErr_Format(RD_KAFKA_RESP_ERR__INVALID_ARG,
+                                         "Cannot commit offsets for message with error: '%s'",
+                                         c_errstr ? c_errstr : "unknown error");
+                        Py_XDECREF(errstr8);
+                        Py_XDECREF(errstr);
+                        return NULL;
+                }
 
 		c_offsets = rd_kafka_topic_partition_list_new(1);
 		rd_kafka_topic_partition_list_add(
@@ -546,6 +567,24 @@ static PyObject *Consumer_store_offsets (Handle *self, PyObject *args,
 		}
 
 		m = (Message *)msg;
+                /* Backport source: a6d2e1e
+                 * "Fixed a segfault when 'commit' or 'store_offsets' consumer method is called incorrectly with errored Message object (#1754)". */
+                if (m->error && m->error != Py_None) {
+                        PyObject *errstr = NULL;
+                        PyObject *errstr8 = NULL;
+                        const char *c_errstr = NULL;
+
+                        errstr = cfl_PyObject_Unistr(m->error);
+                        if (errstr)
+                                c_errstr = cfl_PyUnistr_AsUTF8(errstr, &errstr8);
+
+                        cfl_PyErr_Format(RD_KAFKA_RESP_ERR__INVALID_ARG,
+                                         "Cannot store offsets for message with error: '%s'",
+                                         c_errstr ? c_errstr : "unknown error");
+                        Py_XDECREF(errstr8);
+                        Py_XDECREF(errstr);
+                        return NULL;
+                }
 
 		c_offsets = rd_kafka_topic_partition_list_new(1);
 		rd_kafka_topic_partition_list_add(
@@ -1281,6 +1320,12 @@ static PyMethodDef Consumer_methods[] = {
         { "list_topics", (PyCFunction)list_topics, METH_VARARGS|METH_KEYWORDS,
           list_topics_doc
         },
+        { "stats_collect", (PyCFunction)stats_collect, METH_NOARGS,
+          stats_collect_doc
+        },
+        { "config_dump", (PyCFunction)config_dump, METH_NOARGS,
+          config_dump_doc
+        },
 
 	{ NULL }
 };
@@ -1328,6 +1373,9 @@ static void Consumer_rebalance_cb (rd_kafka_t *rk, rd_kafka_resp_err_t err,
 		if (result)
 			Py_DECREF(result);
 		else {
+			/* Backport source: 9bfe49c
+			 * "Fix error propagation rule for Python's C API (#2019)". */
+			CallState_fetch_exception(cs);
 			CallState_crash(cs);
 			rd_kafka_yield(rk);
 		}
@@ -1399,9 +1447,9 @@ static PyObject *Consumer_new (PyTypeObject *type, PyObject *args,
 }
 
 
-PyTypeObject ConsumerType = {
+PyTypeObject CConsumerType = {
 	PyVarObject_HEAD_INIT(NULL, 0)
-	"cimpl.Consumer",        /*tp_name*/
+	"cimpl.CConsumer",       /*tp_name*/
 	sizeof(Handle),          /*tp_basicsize*/
 	0,                         /*tp_itemsize*/
 	(destructor)Consumer_dealloc, /*tp_dealloc*/
@@ -1423,7 +1471,7 @@ PyTypeObject ConsumerType = {
 	Py_TPFLAGS_HAVE_GC, /*tp_flags*/
         "A high-level Apache Kafka Consumer\n"
         "\n"
-        ".. py:function:: Consumer(config)\n"
+        ".. py:function:: CConsumer(config)\n"
         "\n"
         "Create a new Consumer instance using the provided configuration *dict* ("
         "including properties and callback functions). "

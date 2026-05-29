@@ -1,0 +1,2 @@
+Topic鉴权,Group鉴权,是否需要写Group,预期
+TRUE,TRUE,TRUE,anonymous user can produce/consume; authenticated user needs the configured group
